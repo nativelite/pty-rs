@@ -393,9 +393,12 @@ impl Sys {
 impl Drop for Sys {
     fn drop(&mut self) {
         unsafe {
-            ClosePseudoConsole(self.hpc);
+            // Pipes first: ClosePseudoConsole blocks until conhost drains
+            // its output, and conhost can be wedged mid-write to a full
+            // pipe nobody is reading. Breaking the pipes unblocks it.
             CloseHandle(self.input_write);
             CloseHandle(self.output_read);
+            ClosePseudoConsole(self.hpc);
             CloseHandle(self.thread);
             CloseHandle(self.process);
         }
