@@ -1,0 +1,18 @@
+[package]
+name = "pty"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+description = "Spawn a child process on a real pseudo-terminal (ConPTY on Windows, POSIX pty on Unix) via the crate's own FFI, using only the Rust standard library."
+license = "MIT"
+repository = "https://github.com/nativelite/pty-rs"
+keywords = ["pty", "conpty", "terminal", "process", "nativelite"]
+categories = ["os", "command-line-interface"]
+
+# nativelite core rule: ZERO third-party dependencies. Do not add to this.
+# (The OS PTY layer is reached through our own extern blocks, no crates.)
+[dependencies]
+
+[lib]
+name = "pty"
+path = "src/lib.rs"

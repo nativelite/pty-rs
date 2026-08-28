@@ -1,0 +1,21 @@
+name: CI
+
+# Lean while the package is early: PRs and manual runs only — never on every
+# push (no double-runs, minimal Actions minutes). The full target matrix is
+# added at a milestone/release. Local `python dev.py check` is the pre-push gate.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Rust toolchain is preinstalled on ubuntu-latest runners.
+      - run: rustc --version && cargo --version
+      - run: python dev.py check   # zero-dependency guard + cargo test
