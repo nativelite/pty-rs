@@ -44,6 +44,11 @@ Semantics, stated plainly:
   (overrides win by key), so `PATH`/`SystemRoot` survive while a credential
   can be set for one child alone. `spawn` is `spawn_with_env` with no
   overrides.
+- `spawn_full(cmd, args, rows, cols, env, cwd)` adds a per-child **working
+  directory**: `cwd = Some(dir)` starts the child in `dir` (so a spawned
+  agent auto-loads the `CLAUDE.md` in its own tree), `None` inherits the
+  parent's cwd. A nonexistent `cwd` is returned as an `io::Error` — no silent
+  fallback. `spawn` and `spawn_with_env` are `spawn_full` with `cwd = None`.
 
 ## Platform notes (the hard-won bits)
 
@@ -65,9 +70,9 @@ Semantics, stated plainly:
 ## What's deliberately out of scope
 
 Multiplexing, layout, scrollback, and session persistence — the `amux`
-product's concerns. Per-child **env injection** is supported (see
-`spawn_with_env` above); **cwd** customization is not (children inherit the
-parent's working directory). One child, one PTY, bytes in, bytes out.
+product's concerns. Per-child **env injection** (`spawn_with_env`) and a
+per-child **working directory** (`spawn_full`) are supported; everything above
+is not. One child, one PTY, bytes in, bytes out.
 
 ## Correctness
 

@@ -241,6 +241,115 @@ fn override_wins_over_inherited_value() {
     p.wait().unwrap();
 }
 
+/// Shell one-liner that prints the child's own working directory, wrapped in
+/// the same `[MK[...]MK]` markers used for env values. Windows `cd` with no
+/// argument prints the current directory; Unix `pwd`.
+fn echo_cwd() -> String {
+    if cfg!(windows) {
+        "echo [MK[& cd & echo ]MK]".to_string()
+    } else {
+        "printf '[MK['; pwd | tr -d '\\n'; printf ']MK]'".to_string()
+    }
+}
+
+/// A fresh temp directory unique to this process + a caller-supplied tag,
+/// created on disk. Uses the OS temp dir via `std::env::temp_dir` so it works
+/// on both platforms without extra deps.
+fn make_temp_dir(tag: &str) -> std::path::PathBuf {
+    let mut dir = std::env::temp_dir();
+    dir.push(format!("pty-cwd-{}-{}", std::process::id(), tag));
+    std::fs::create_dir_all(&dir).unwrap();
+    // Canonicalize so comparisons survive symlinked temp dirs (e.g. macOS
+    // /tmp -> /private/tmp, or 8.3 short paths on Windows).
+    std::fs::canonicalize(&dir).unwrap()
+}
+
+/// Strip a Windows extended-length prefix (`\\?\`) that `canonicalize` adds,
+/// so the string we look for matches what the child's shell prints.
+fn strip_verbatim(p: &str) -> &str {
+    p.strip_prefix(r"\\?\").unwrap_or(p)
+}
+
+#[test]
+fn spawn_with_cwd_starts_child_there() {
+    let dir = make_temp_dir("some");
+    let (cmd, args) = shell(&echo_cwd());
+    let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let dir_str = dir.to_string_lossy().into_owned();
+    let mut p = pty::Pty::spawn_full(cmd, &argrefs, 24, 80, &[], Some(&dir_str)).unwrap();
+    let out = read_until(&mut p, b"]MK]", Duration::from_secs(10));
+    let want = strip_verbatim(&dir_str);
+    assert!(
+        windows_contains(&out, want.as_bytes()),
+        "child cwd should be {want:?}, got: {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    p.wait().unwrap();
+}
+
+#[test]
+fn spawn_with_none_cwd_inherits_parent() {
+    // cwd = None must reproduce today's behavior: the child inherits the
+    // parent's (this test process's) working directory.
+    let parent = std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
+    let parent_str = parent.to_string_lossy().into_owned();
+    let (cmd, args) = shell(&echo_cwd());
+    let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let mut p = pty::Pty::spawn_full(cmd, &argrefs, 24, 80, &[], None).unwrap();
+    let out = read_until(&mut p, b"]MK]", Duration::from_secs(10));
+    let want = strip_verbatim(&parent_str);
+    assert!(
+        windows_contains(&out, want.as_bytes()),
+        "child should inherit parent cwd {want:?}, got: {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    p.wait().unwrap();
+}
+
+#[test]
+fn env_and_cwd_together() {
+    // A child given both an injected env var and a cwd must see both.
+    let dir = make_temp_dir("envcwd");
+    let dir_str = dir.to_string_lossy().into_owned();
+    // Print the injected var, then the cwd, so one child proves both.
+    let script = if cfg!(windows) {
+        "echo [MK[%PTY_BOTH_TEST%]MK] & echo [CW[& cd & echo ]CW]".to_string()
+    } else {
+        "printf '[MK[%s]MK]' \"$PTY_BOTH_TEST\"; printf '[CW['; pwd | tr -d '\\n'; printf ']CW]'"
+            .to_string()
+    };
+    let (cmd, args) = shell(&script);
+    let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let env = vec![("PTY_BOTH_TEST".to_string(), "both-value-8".to_string())];
+    let mut p = pty::Pty::spawn_full(cmd, &argrefs, 24, 80, &env, Some(&dir_str)).unwrap();
+    let out = read_until(&mut p, b"]CW]", Duration::from_secs(10));
+    assert!(
+        windows_contains(&out, b"[MK[both-value-8]MK]"),
+        "injected env var missing, got: {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    let want = strip_verbatim(&dir_str);
+    assert!(
+        windows_contains(&out, want.as_bytes()),
+        "child cwd should be {want:?}, got: {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    p.wait().unwrap();
+}
+
+#[test]
+fn nonexistent_cwd_errors() {
+    let (cmd, args) = shell("echo unreachable");
+    let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let missing = if cfg!(windows) {
+        r"C:\pty-cwd-does-not-exist-xyz\nope"
+    } else {
+        "/pty-cwd-does-not-exist-xyz/nope"
+    };
+    let err = pty::Pty::spawn_full(cmd, &argrefs, 24, 80, &[], Some(missing));
+    assert!(err.is_err(), "nonexistent cwd should error, not fall back");
+}
+
 #[test]
 fn four_arg_spawn_still_inherits_env_unchanged() {
     // The pre-existing 4-arg spawn must behave exactly as before: the child

@@ -25,12 +25,14 @@
 //! ```
 //!
 //! Per-child environment injection is supported via
-//! [`Pty::spawn_with_env`]: the child sees the parent's environment merged
-//! with caller-supplied overrides (overrides win), so a credential can be
-//! set for one child alone. Working-directory customization stays out of
-//! scope (children inherit the parent's cwd), as do multiplexing, layout,
-//! scrollback, and session persistence — those are the `amux` product's
-//! concerns. One child, one PTY, bytes in, bytes out.
+//! [`Pty::spawn_with_env`], and a per-child working directory via
+//! [`Pty::spawn_full`]: the child sees the parent's environment merged with
+//! caller-supplied overrides (overrides win), so a credential can be set for
+//! one child alone, and can be started in a directory of the caller's
+//! choosing — the enabler for each agent auto-loading the `CLAUDE.md` in its
+//! own tree. Multiplexing, layout, scrollback, and session persistence stay
+//! out of scope — those are the `amux` product's concerns. One child, one
+//! PTY, bytes in, bytes out.
 
 use std::io;
 use std::time::Duration;
@@ -59,7 +61,7 @@ impl Pty {
     /// Equivalent to [`spawn_with_env`](Pty::spawn_with_env) with no
     /// overrides.
     pub fn spawn(cmd: &str, args: &[&str], rows: u16, cols: u16) -> io::Result<Pty> {
-        Self::spawn_with_env(cmd, args, rows, cols, &[])
+        Self::spawn_full(cmd, args, rows, cols, &[], None)
     }
 
     /// Spawn `cmd` with `args` on a fresh pseudo-terminal of the given size,
@@ -75,6 +77,8 @@ impl Pty {
     /// Key handling matches the platform: case-sensitive on Unix,
     /// case-insensitive on Windows (where `Path` and `PATH` are the same
     /// variable). The child's working directory is still inherited.
+    ///
+    /// Equivalent to [`spawn_full`](Pty::spawn_full) with `cwd = None`.
     pub fn spawn_with_env(
         cmd: &str,
         args: &[&str],
@@ -82,8 +86,35 @@ impl Pty {
         cols: u16,
         env: &[(String, String)],
     ) -> io::Result<Pty> {
+        Self::spawn_full(cmd, args, rows, cols, env, None)
+    }
+
+    /// Spawn `cmd` with `args` on a fresh pseudo-terminal of the given size,
+    /// with per-child environment overrides **and** a per-child working
+    /// directory. This is the full form; [`spawn`](Pty::spawn) and
+    /// [`spawn_with_env`](Pty::spawn_with_env) are thin wrappers over it.
+    ///
+    /// Environment handling is exactly [`spawn_with_env`](Pty::spawn_with_env):
+    /// the child's environment is this process's environment merged with `env`
+    /// (overrides win by key), so inherited variables are preserved.
+    ///
+    /// `cwd` sets the child's working directory:
+    /// - `Some(dir)` starts the child in `dir`. This is what lets a spawned
+    ///   agent auto-load the `CLAUDE.md` sitting in its own tree.
+    /// - `None` inherits this process's working directory (today's behavior).
+    ///
+    /// A `cwd` that does not exist is surfaced as an [`io::Error`] from this
+    /// call — the child is not started in a fallback directory.
+    pub fn spawn_full(
+        cmd: &str,
+        args: &[&str],
+        rows: u16,
+        cols: u16,
+        env: &[(String, String)],
+        cwd: Option<&str>,
+    ) -> io::Result<Pty> {
         Ok(Pty {
-            sys: sys::Sys::spawn_with_env(cmd, args, rows, cols, env)?,
+            sys: sys::Sys::spawn_full(cmd, args, rows, cols, env, cwd)?,
         })
     }
 

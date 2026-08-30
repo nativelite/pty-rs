@@ -251,13 +251,27 @@ pub fn build_command_line(cmd: &str, args: &[&str]) -> String {
 }
 
 impl Sys {
-    pub fn spawn_with_env(
+    pub fn spawn_full(
         cmd: &str,
         args: &[&str],
         rows: u16,
         cols: u16,
         env: &[(String, String)],
+        cwd: Option<&str>,
     ) -> io::Result<Sys> {
+        // Fail fast on a nonexistent cwd: CreateProcessW reports this as
+        // ERROR_DIRECTORY, but checking up front lets us surface a clear
+        // error before allocating pipes/console, and matches the contract
+        // (no silent fallback to the parent's directory).
+        if let Some(dir) = cwd {
+            let meta = std::fs::metadata(dir)?;
+            if !meta.is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("cwd is not a directory: {dir}"),
+                ));
+            }
+        }
         unsafe {
             // Pipes: (console input read, our input write) and
             // (our output read, console output write).
@@ -292,7 +306,7 @@ impl Sys {
                 ));
             }
 
-            match spawn_on_console(hpc, cmd, args, env) {
+            match spawn_on_console(hpc, cmd, args, env, cwd) {
                 Ok((process, thread)) => Ok(Sys {
                     hpc,
                     input_write: in_write,
@@ -466,6 +480,7 @@ unsafe fn spawn_on_console(
     cmd: &str,
     args: &[&str],
     env: &[(String, String)],
+    cwd: Option<&str>,
 ) -> io::Result<(Handle, Handle)> {
     let mut attr_size: usize = 0;
     InitializeProcThreadAttributeList(std::ptr::null_mut(), 1, 0, &mut attr_size);
@@ -513,6 +528,14 @@ unsafe fn spawn_on_console(
             ),
             None => (std::ptr::null_mut(), EXTENDED_STARTUPINFO_PRESENT),
         };
+        // lpCurrentDirectory: a UTF-16, null-terminated directory when the
+        // caller gave a cwd, else NULL (inherit the parent's). `dir_wide`
+        // must outlive the call, hence the binding here.
+        let dir_wide = cwd.map(|d| wide(std::ffi::OsStr::new(d)));
+        let dir_ptr = match dir_wide.as_ref() {
+            Some(w) => w.as_ptr(),
+            None => std::ptr::null(),
+        };
         if CreateProcessW(
             std::ptr::null(),
             cmdline.as_mut_ptr(),
@@ -521,7 +544,7 @@ unsafe fn spawn_on_console(
             0, // no handle inheritance; the console attribute carries the pty
             creation_flags,
             env_ptr,
-            std::ptr::null(),
+            dir_ptr,
             &mut si,
             &mut pi,
         ) == 0

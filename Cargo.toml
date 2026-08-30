@@ -1,6 +1,6 @@
 [package]
 name = "pty"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.70"
 description = "Spawn a child process on a real pseudo-terminal (ConPTY on Windows, POSIX pty on Unix) via the crate's own FFI, using only the Rust standard library."

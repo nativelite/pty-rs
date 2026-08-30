@@ -103,13 +103,28 @@ pub struct Sys {
 }
 
 impl Sys {
-    pub fn spawn_with_env(
+    pub fn spawn_full(
         cmd: &str,
         args: &[&str],
         rows: u16,
         cols: u16,
         env: &[(String, String)],
+        cwd: Option<&str>,
     ) -> io::Result<Sys> {
+        // Fail fast on a nonexistent cwd. `Command::current_dir` defers the
+        // chdir to the child, where a failure would surface only as a generic
+        // spawn error (and after we have allocated the pty); checking here
+        // gives the caller a clear error and honors the no-silent-fallback
+        // contract.
+        if let Some(dir) = cwd {
+            let meta = std::fs::metadata(dir)?;
+            if !meta.is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    format!("cwd is not a directory: {dir}"),
+                ));
+            }
+        }
         let master = unsafe { posix_openpt(O_RDWR | O_NOCTTY) };
         if master < 0 {
             return Err(io::Error::last_os_error());
@@ -162,6 +177,13 @@ impl Sys {
                 // layers the overrides on top (merge, not replace) so the
                 // child keeps PATH and friends while gaining the injected keys.
                 command.envs(env.iter().map(|(k, v)| (k, v)));
+                // Per-child working directory. `Some` sets it; `None` leaves
+                // the child to inherit the parent's cwd (Command's default).
+                // std performs the chdir in the child before our pre_exec
+                // hook and before exec, so both env merge and cwd take effect.
+                if let Some(dir) = cwd {
+                    command.current_dir(dir);
+                }
                 unsafe {
                     command.pre_exec(|| {
                         if setsid() < 0 {
