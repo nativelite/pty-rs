@@ -24,10 +24,13 @@
 //! # std::io::Result::Ok(())
 //! ```
 //!
-//! Deliberately out of scope: multiplexing, layout, scrollback, session
-//! persistence, and environment/cwd customization (v1 children inherit
-//! both) — those are the `amux` product's concerns. One child, one PTY,
-//! bytes in, bytes out.
+//! Per-child environment injection is supported via
+//! [`Pty::spawn_with_env`]: the child sees the parent's environment merged
+//! with caller-supplied overrides (overrides win), so a credential can be
+//! set for one child alone. Working-directory customization stays out of
+//! scope (children inherit the parent's cwd), as do multiplexing, layout,
+//! scrollback, and session persistence — those are the `amux` product's
+//! concerns. One child, one PTY, bytes in, bytes out.
 
 use std::io;
 use std::time::Duration;
@@ -52,9 +55,35 @@ impl Pty {
     /// Spawn `cmd` with `args` on a fresh pseudo-terminal of the given
     /// size. The child inherits this process's environment and working
     /// directory.
+    ///
+    /// Equivalent to [`spawn_with_env`](Pty::spawn_with_env) with no
+    /// overrides.
     pub fn spawn(cmd: &str, args: &[&str], rows: u16, cols: u16) -> io::Result<Pty> {
+        Self::spawn_with_env(cmd, args, rows, cols, &[])
+    }
+
+    /// Spawn `cmd` with `args` on a fresh pseudo-terminal of the given size,
+    /// with per-child environment overrides.
+    ///
+    /// The child's environment is **this process's environment merged with
+    /// `env`**, where an entry in `env` overrides (or adds) the value for its
+    /// key. Inherited variables the overrides do not name — `PATH`,
+    /// `SystemRoot`, and everything else — are preserved, so the child still
+    /// finds its runtime. This is the enabler for injecting credentials into
+    /// one child without leaking them into the parent or its siblings.
+    ///
+    /// Key handling matches the platform: case-sensitive on Unix,
+    /// case-insensitive on Windows (where `Path` and `PATH` are the same
+    /// variable). The child's working directory is still inherited.
+    pub fn spawn_with_env(
+        cmd: &str,
+        args: &[&str],
+        rows: u16,
+        cols: u16,
+        env: &[(String, String)],
+    ) -> io::Result<Pty> {
         Ok(Pty {
-            sys: sys::Sys::spawn(cmd, args, rows, cols)?,
+            sys: sys::Sys::spawn_with_env(cmd, args, rows, cols, env)?,
         })
     }
 

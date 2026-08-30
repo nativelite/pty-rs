@@ -103,7 +103,13 @@ pub struct Sys {
 }
 
 impl Sys {
-    pub fn spawn(cmd: &str, args: &[&str], rows: u16, cols: u16) -> io::Result<Sys> {
+    pub fn spawn_with_env(
+        cmd: &str,
+        args: &[&str],
+        rows: u16,
+        cols: u16,
+        env: &[(String, String)],
+    ) -> io::Result<Sys> {
         let master = unsafe { posix_openpt(O_RDWR | O_NOCTTY) };
         if master < 0 {
             return Err(io::Error::last_os_error());
@@ -152,6 +158,10 @@ impl Sys {
                     .stdin(stdin)
                     .stdout(stdout)
                     .stderr(stderr);
+                // Command inherits the parent environment by default; `envs`
+                // layers the overrides on top (merge, not replace) so the
+                // child keeps PATH and friends while gaining the injected keys.
+                command.envs(env.iter().map(|(k, v)| (k, v)));
                 unsafe {
                     command.pre_exec(|| {
                         if setsid() < 0 {

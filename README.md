@@ -39,6 +39,11 @@ Semantics, stated plainly:
 - Exit codes: a Unix child killed by a signal reports `128 + signo`.
 - Dropping a `Pty` releases the terminal but — like `std::process::Child` —
   does **not** kill the child.
+- `spawn_with_env(cmd, args, rows, cols, env)` injects per-child environment
+  variables: the child sees the **parent environment merged with `env`**
+  (overrides win by key), so `PATH`/`SystemRoot` survive while a credential
+  can be set for one child alone. `spawn` is `spawn_with_env` with no
+  overrides.
 
 ## Platform notes (the hard-won bits)
 
@@ -59,9 +64,10 @@ Semantics, stated plainly:
 
 ## What's deliberately out of scope
 
-Multiplexing, layout, scrollback, session persistence, and env/cwd
-customization (v1 children inherit both) — the `amux` product's concerns.
-One child, one PTY, bytes in, bytes out.
+Multiplexing, layout, scrollback, and session persistence — the `amux`
+product's concerns. Per-child **env injection** is supported (see
+`spawn_with_env` above); **cwd** customization is not (children inherit the
+parent's working directory). One child, one PTY, bytes in, bytes out.
 
 ## Correctness
 

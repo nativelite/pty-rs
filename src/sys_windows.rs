@@ -128,6 +128,7 @@ extern "system" {
 
 const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 0x0002_0016;
 const EXTENDED_STARTUPINFO_PRESENT: u32 = 0x0008_0000;
+const CREATE_UNICODE_ENVIRONMENT: u32 = 0x0000_0400;
 const STARTF_USESTDHANDLES: u32 = 0x0000_0100;
 const ERROR_INSUFFICIENT_BUFFER: i32 = 122;
 const ERROR_BROKEN_PIPE: i32 = 109;
@@ -192,6 +193,54 @@ fn quote_arg(arg: &str) -> String {
     out
 }
 
+/// Build a UTF-16, double-null-terminated environment block for
+/// `CreateProcessW` (used with `CREATE_UNICODE_ENVIRONMENT`) from the parent
+/// environment merged with `overrides`.
+///
+/// Semantics: start from `std::env::vars_os` (the parent set), then apply
+/// each override — later wins, and keys are matched **case-insensitively**
+/// because Windows environment variables are (so `Path` overrides an
+/// inherited `PATH` rather than duplicating it). The final block is sorted
+/// case-insensitively by key, which `CreateProcessW` requires. Returns
+/// `None` when the merged environment is empty, so the caller can pass a
+/// NULL block (there is no valid zero-entry Unicode block — it would be just
+/// the terminator, which is the "empty environment" sentinel we never want).
+fn build_env_block(overrides: &[(String, String)]) -> Option<Vec<u16>> {
+    use std::collections::BTreeMap;
+
+    // Key: uppercased (for case-insensitive identity + ordering). Value:
+    // (original-cased key, value) so we emit the real name.
+    let mut merged: BTreeMap<String, (String, String)> = BTreeMap::new();
+    for (k, v) in std::env::vars_os() {
+        let k = k.to_string_lossy().into_owned();
+        let v = v.to_string_lossy().into_owned();
+        merged.insert(k.to_uppercase(), (k, v));
+    }
+    for (k, v) in overrides {
+        merged.insert(k.to_uppercase(), (k.clone(), v.clone()));
+    }
+    if merged.is_empty() {
+        return None;
+    }
+
+    let mut block: Vec<u16> = Vec::new();
+    for (_, (k, v)) in merged {
+        // A truly empty key can't form a valid entry; skip it. (Windows also
+        // exposes per-drive cwd markers whose key begins with '=', e.g.
+        // "=C:"; those are real inherited state and we pass them through.)
+        if k.is_empty() {
+            continue;
+        }
+        block.extend(k.encode_utf16());
+        block.push(u16::from(b'='));
+        block.extend(v.encode_utf16());
+        block.push(0);
+    }
+    // Terminating null for the block (on top of the last entry's null).
+    block.push(0);
+    Some(block)
+}
+
 pub fn build_command_line(cmd: &str, args: &[&str]) -> String {
     let mut line = quote_arg(cmd);
     for a in args {
@@ -202,7 +251,13 @@ pub fn build_command_line(cmd: &str, args: &[&str]) -> String {
 }
 
 impl Sys {
-    pub fn spawn(cmd: &str, args: &[&str], rows: u16, cols: u16) -> io::Result<Sys> {
+    pub fn spawn_with_env(
+        cmd: &str,
+        args: &[&str],
+        rows: u16,
+        cols: u16,
+        env: &[(String, String)],
+    ) -> io::Result<Sys> {
         unsafe {
             // Pipes: (console input read, our input write) and
             // (our output read, console output write).
@@ -237,7 +292,7 @@ impl Sys {
                 ));
             }
 
-            match spawn_on_console(hpc, cmd, args) {
+            match spawn_on_console(hpc, cmd, args, env) {
                 Ok((process, thread)) => Ok(Sys {
                     hpc,
                     input_write: in_write,
@@ -406,7 +461,12 @@ impl Drop for Sys {
 }
 
 /// Build the attribute list binding the child to `hpc` and CreateProcess it.
-unsafe fn spawn_on_console(hpc: Handle, cmd: &str, args: &[&str]) -> io::Result<(Handle, Handle)> {
+unsafe fn spawn_on_console(
+    hpc: Handle,
+    cmd: &str,
+    args: &[&str],
+    env: &[(String, String)],
+) -> io::Result<(Handle, Handle)> {
     let mut attr_size: usize = 0;
     InitializeProcThreadAttributeList(std::ptr::null_mut(), 1, 0, &mut attr_size);
     let e = last_err();
@@ -441,14 +501,26 @@ unsafe fn spawn_on_console(hpc: Handle, cmd: &str, args: &[&str]) -> io::Result<
         si.attribute_list = attr_list;
         let mut pi: ProcessInformation = std::mem::zeroed();
         let mut cmdline = wide(std::ffi::OsStr::new(&build_command_line(cmd, args)));
+        // Merged (parent + overrides) Unicode environment block. `env_block`
+        // must outlive the call; a `None` merged env means pass NULL (inherit
+        // verbatim), matching the old behavior when there are no overrides and
+        // the parent env is somehow empty.
+        let mut env_block = build_env_block(env);
+        let (env_ptr, creation_flags) = match env_block.as_mut() {
+            Some(b) => (
+                b.as_mut_ptr() as *mut c_void,
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+            ),
+            None => (std::ptr::null_mut(), EXTENDED_STARTUPINFO_PRESENT),
+        };
         if CreateProcessW(
             std::ptr::null(),
             cmdline.as_mut_ptr(),
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             0, // no handle inheritance; the console attribute carries the pty
-            EXTENDED_STARTUPINFO_PRESENT,
-            std::ptr::null_mut(),
+            creation_flags,
+            env_ptr,
             std::ptr::null(),
             &mut si,
             &mut pi,

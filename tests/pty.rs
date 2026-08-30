@@ -157,3 +157,103 @@ fn output_written_before_exit_is_drainable_afterwards() {
 fn spawn_of_missing_program_errors_cleanly() {
     assert!(pty::Pty::spawn("definitely-not-a-real-program-xyz", &[], 24, 80).is_err());
 }
+
+/// Shell one-liner that prints the value of environment variable `name`,
+/// wrapped in unique markers so we can find it in the terminal's echo/prompt
+/// noise. Emits `[MK[VALUE]MK]` — square brackets, deliberately NOT `<`/`>`
+/// which cmd.exe would treat as redirection. Windows uses `echo`, Unix
+/// `printf`.
+fn echo_var(name: &str) -> String {
+    if cfg!(windows) {
+        format!("echo [MK[%{name}%]MK]")
+    } else {
+        format!("printf '[MK[%s]MK]' \"${name}\"")
+    }
+}
+
+#[test]
+fn injected_env_var_reaches_the_child() {
+    let (cmd, args) = shell(&echo_var("PTY_INJECT_TEST"));
+    let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let env = vec![(
+        "PTY_INJECT_TEST".to_string(),
+        "injected-value-9".to_string(),
+    )];
+    let mut p = pty::Pty::spawn_with_env(cmd, &argrefs, 24, 80, &env).unwrap();
+    let out = read_until(&mut p, b"]MK]", Duration::from_secs(10));
+    assert!(
+        windows_contains(&out, b"[MK[injected-value-9]MK]"),
+        "expected injected value in output, got: {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    p.wait().unwrap();
+}
+
+#[test]
+fn inherited_env_survives_injection() {
+    // PATH is set in the parent and NOT among our overrides: the merge must
+    // keep it (a from-scratch env would drop it). We inject an unrelated key
+    // and assert PATH is still non-empty in the child.
+    assert!(
+        std::env::var_os("PATH").is_some(),
+        "test harness expects PATH in the environment"
+    );
+    let (cmd, args) = shell(&echo_var("PATH"));
+    let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let env = vec![("PTY_UNRELATED_KEY".to_string(), "x".to_string())];
+    let mut p = pty::Pty::spawn_with_env(cmd, &argrefs, 24, 80, &env).unwrap();
+    let out = read_until(&mut p, b"]MK]", Duration::from_secs(10));
+    // The child printed [MK[...PATH...]MK]; a preserved PATH is a non-empty
+    // body between the markers.
+    assert!(
+        !windows_contains(&out, b"[MK[]MK]"),
+        "PATH was empty in child (merge dropped it): {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    assert!(
+        windows_contains(&out, b"]MK]"),
+        "never saw the closing marker: {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    p.wait().unwrap();
+}
+
+#[test]
+fn override_wins_over_inherited_value() {
+    // Set a var in the parent, then override it for the child only: the child
+    // must see the override, and the parent's value is untouched.
+    std::env::set_var("PTY_OVERRIDE_TEST", "parent-value");
+    let (cmd, args) = shell(&echo_var("PTY_OVERRIDE_TEST"));
+    let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let env = vec![("PTY_OVERRIDE_TEST".to_string(), "child-value-7".to_string())];
+    let mut p = pty::Pty::spawn_with_env(cmd, &argrefs, 24, 80, &env).unwrap();
+    let out = read_until(&mut p, b"]MK]", Duration::from_secs(10));
+    assert!(
+        windows_contains(&out, b"[MK[child-value-7]MK]"),
+        "override did not win, got: {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    // Parent's own environment is unchanged.
+    assert_eq!(
+        std::env::var("PTY_OVERRIDE_TEST").as_deref(),
+        Ok("parent-value")
+    );
+    p.wait().unwrap();
+}
+
+#[test]
+fn four_arg_spawn_still_inherits_env_unchanged() {
+    // The pre-existing 4-arg spawn must behave exactly as before: the child
+    // inherits a parent var with no overrides supplied.
+    std::env::set_var("PTY_INHERIT_TEST", "inherited-value-5");
+    let (cmd, args) = shell(&echo_var("PTY_INHERIT_TEST"));
+    let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let mut p = pty::Pty::spawn(cmd, &argrefs, 24, 80).unwrap();
+    let out = read_until(&mut p, b"]MK]", Duration::from_secs(10));
+    assert!(
+        windows_contains(&out, b"[MK[inherited-value-5]MK]"),
+        "4-arg spawn did not inherit env, got: {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    p.wait().unwrap();
+}

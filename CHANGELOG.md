@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-29
+
+### Added
+- `Pty::spawn_with_env(cmd, args, rows, cols, env)` — spawn with per-child
+  environment injection. The child's environment is the parent's environment
+  **merged** with the caller's overrides (overrides win by key), so inherited
+  variables like `PATH`/`SystemRoot` are preserved while credentials can be
+  set for one child alone. The existing 4-arg `Pty::spawn` is unchanged and
+  now delegates to `spawn_with_env` with no overrides.
+  - Windows: builds a UTF-16, double-null-terminated environment block from
+    the merged, case-insensitively-sorted map and passes it to
+    `CreateProcessW` with `CREATE_UNICODE_ENVIRONMENT`. Keys merge
+    case-insensitively (`Path` overrides an inherited `PATH`).
+  - Unix: overrides are layered onto the inherited environment via
+    `Command::envs` before exec.
+- Integration tests: an injected variable reaches the child, an inherited
+  `PATH` survives the merge, an override beats the inherited value (parent
+  env untouched), and the 4-arg `spawn` still inherits unchanged.
+
 ## [0.1.0] - 2026-08-28
 
 ### Added
@@ -32,5 +51,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Sixth crate of the nativelite **agent terminal** suite — the `amux`
 enabler (see `roadmap/agent-terminal-suite.md` in `nativelite/ops`).
 
-[Unreleased]: https://github.com/nativelite/pty-rs/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/nativelite/pty-rs/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/nativelite/pty-rs/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/nativelite/pty-rs/releases/tag/v0.1.0
