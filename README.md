@@ -64,7 +64,7 @@ Semantics, stated plainly:
   slave fd, made session leader + controlling tty in `pre_exec`; the
   master carries `FD_CLOEXEC` so it never leaks into children. Timeouts
   use `poll`; `EIO` from a closed slave is end-of-stream. Linux is
-  CI-exercised; macOS constants are in place and compile-checked, not yet
+  exercised (run locally); macOS constants are in place and compile-checked, not yet
   runtime-verified.
 
 ## What's deliberately out of scope
@@ -82,10 +82,10 @@ shell and its response comes back, resize succeeds and the child observes a
 tty, exit codes propagate (twice-`wait` stable), `try_wait` transitions
 after `kill` (and killing an exited child is a no-op), pre-exit output is
 drainable post-exit, and a missing program errors cleanly without leaking
-handles. Windows runs these locally; Linux runs them in CI.
+handles. Windows runs these locally; the suite is portable and passes on Linux too.
 
 ## Development
 
 ```bash
-python dev.py check   # zero-dependency guard + cargo test (what CI runs)
+python dev.py check   # zero-dependency guard + cargo test (the pre-push gate)
 ```
