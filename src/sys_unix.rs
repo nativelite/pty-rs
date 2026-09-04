@@ -273,6 +273,18 @@ impl Sys {
         Ok(self.child.try_wait()?.map(exit_code))
     }
 
+    /// The child's process id.
+    ///
+    /// [`Sys::spawn`] runs `setsid()` in `pre_exec`, so every child is a session
+    /// leader and its **process-group id equals this pid**. That is what lets a
+    /// caller tear down the child's whole tree with `killpg` instead of only the
+    /// process itself — an agent CLI's own subprocesses (MCP servers, language
+    /// servers, node helpers) are in that group and are otherwise left behind,
+    /// reparented to `init`, when the direct child is killed.
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
     pub fn kill(&mut self) -> io::Result<()> {
         match self.child.kill() {
             Ok(()) => Ok(()),

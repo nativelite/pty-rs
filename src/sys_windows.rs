@@ -71,6 +71,10 @@ extern "system" {
     fn ResizePseudoConsole(hpc: Handle, size: Coord) -> i32;
     fn ClosePseudoConsole(hpc: Handle);
     fn CloseHandle(handle: Handle) -> i32;
+    /// Resolve a process id from its handle. The caller needs the id (not the
+    /// handle) to reopen the process — e.g. to assign it to a Job Object, which
+    /// is how a whole process tree is bounded on Windows.
+    fn GetProcessId(process: Handle) -> u32;
     fn ReadFile(
         handle: Handle,
         buf: *mut u8,
@@ -431,6 +435,16 @@ impl Sys {
             WAIT_TIMEOUT => Ok(None),
             _ => Err(last_err()),
         }
+    }
+
+    /// The child's process id.
+    ///
+    /// Windows has no process groups in the POSIX sense; the equivalent bound on
+    /// a process tree is a Job Object, and a caller assigns one by reopening the
+    /// process from its id. Returns 0 if the handle can no longer be resolved
+    /// (the process has exited), which callers treat as "nothing to do".
+    pub fn pid(&self) -> u32 {
+        unsafe { GetProcessId(self.process) }
     }
 
     pub fn kill(&mut self) -> io::Result<()> {

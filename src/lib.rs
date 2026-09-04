@@ -155,6 +155,19 @@ impl Pty {
         self.sys.try_wait()
     }
 
+    /// The child's process id.
+    ///
+    /// Exposed so a caller can tear down the child's **whole tree**, which
+    /// [`Pty::kill`] deliberately does not do: it terminates the direct child
+    /// only, leaving anything that child spawned to be reparented and run on.
+    /// On unix every child is a session leader (`setsid()` in `pre_exec`), so
+    /// this pid doubles as the process-group id for `killpg`; on Windows it is
+    /// the id to reopen for a Job Object. The teardown *policy* — which signal,
+    /// how long to wait before escalating — belongs to the caller, not here.
+    pub fn pid(&self) -> u32 {
+        self.sys.pid()
+    }
+
     /// Forcibly terminate the child.
     pub fn kill(&mut self) -> io::Result<()> {
         self.sys.kill()
