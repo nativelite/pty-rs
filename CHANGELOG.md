@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Pane children no longer inherit terminals that are not their own** (unix).
+  Two descriptors leaked into every spawned child:
+  - The **master**. `spawn` set `FD_CLOEXEC` on it and checked the result, but
+    the flag was never applied: `fcntl` is variadic in C and was declared here
+    as a plain three-argument function. On Apple ARM64 a variadic argument is
+    passed on the stack while a fixed one is passed in a register, so the flag
+    the callee read was never the flag we sent — and `fcntl` returned 0, so the
+    error check reported success on a call that did nothing. Now declared
+    variadic, as `ioctl` beside it already was.
+  - The **slave**. It was opened with no `FD_CLOEXEC` at all, so the spare
+    descriptor `std` duplicates onto the child's 0/1/2 stayed open in the child
+    as well. Now opened with `O_CLOEXEC`, which leaves no window in which it is
+    inheritable; `std` clears the flag on 0/1/2 when it dup2s them, so the
+    child keeps its stdio and loses only the spare.
+
+  The effect was cumulative and, on macOS, unrecoverable without a reboot: a
+  pane that outlived its parent pinned terminals nothing could reclaim, the pty
+  pool drained one orphan at a time until the machine could not open a terminal
+  at all, and the processes holding them could not be killed — they were
+  already exiting, blocked revoking a controlling terminal another process
+  still held open. Covered by
+  `the_child_inherits_no_terminal_but_its_own`, which reads the child's own
+  descriptor table and fails on any terminal above fd 2.
+
 ## [0.3.0] - 2026-08-29
 
 ### Added

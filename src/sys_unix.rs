@@ -12,6 +12,7 @@ use std::time::Duration;
 #[cfg(target_os = "linux")]
 mod plat {
     pub const O_NOCTTY: i32 = 0o400;
+    pub const O_CLOEXEC: i32 = 0o2_000_000;
     pub const TIOCSCTTY: u64 = 0x540E;
     pub const TIOCSWINSZ: u64 = 0x5414;
     pub type Nfds = u64;
@@ -20,6 +21,7 @@ mod plat {
 #[cfg(target_os = "macos")]
 mod plat {
     pub const O_NOCTTY: i32 = 0x20000;
+    pub const O_CLOEXEC: i32 = 0x100_0000;
     pub const TIOCSCTTY: u64 = 0x2000_7461;
     pub const TIOCSWINSZ: u64 = 0x8008_7467;
     pub type Nfds = u32;
@@ -58,7 +60,13 @@ extern "C" {
     fn write(fd: i32, buf: *const u8, count: usize) -> isize;
     fn poll(fds: *mut PollFd, nfds: Nfds, timeout_ms: i32) -> i32;
     fn ioctl(fd: i32, request: u64, ...) -> i32;
-    fn fcntl(fd: i32, cmd: i32, arg: i32) -> i32;
+    // Variadic, exactly as C declares it. As a plain `(i32, i32, i32)` the
+    // flag is passed in a register while the callee — on Apple ARM64, where
+    // variadic arguments travel on the stack — reads it from somewhere else
+    // entirely, and `fcntl` reports success on a call that set nothing. That is
+    // how every pane child came to inherit its master. `ioctl` above is
+    // declared variadic for the same reason.
+    fn fcntl(fd: i32, cmd: i32, ...) -> i32;
     fn setsid() -> i32;
     #[cfg(target_os = "linux")]
     fn ptsname_r(fd: i32, buf: *mut u8, len: usize) -> i32;
@@ -144,7 +152,11 @@ impl Sys {
             Ok(p) => p,
             Err(e) => return cleanup(e),
         };
-        let slave = unsafe { open(path.as_ptr(), O_RDWR | O_NOCTTY) };
+        // `O_CLOEXEC` at open rather than a second fcntl: there is no window
+        // in which this descriptor is inheritable, and `std` clears the flag on
+        // 0/1/2 when it dup2s them into the child, so the child keeps its stdio
+        // and loses only this spare.
+        let slave = unsafe { open(path.as_ptr(), O_RDWR | O_NOCTTY | O_CLOEXEC) };
         if slave < 0 {
             return cleanup(io::Error::last_os_error());
         }

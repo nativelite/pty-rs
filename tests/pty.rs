@@ -366,3 +366,68 @@ fn four_arg_spawn_still_inherits_env_unchanged() {
     );
     p.wait().unwrap();
 }
+
+/// **A pane child inherits no terminal but its own** (fd hygiene).
+///
+/// `spawn` opens the master, sets `FD_CLOEXEC` on it, and opens the slave with
+/// no `FD_CLOEXEC` at all. The master's flag does not actually get set: `fcntl`
+/// is variadic in C, this crate declared it as a plain three-argument function,
+/// and on Apple ARM64 a variadic argument travels on the stack while a fixed one
+/// travels in a register. The flag never reaches the kernel, and `fcntl` still
+/// returns 0 — so the error check above it reports success on a call that did
+/// nothing.
+///
+/// So every child inherits the master of its own terminal, plus the raw slave
+/// descriptor `std` duplicated onto 0/1/2 and left open. A pane that outlives
+/// its amux therefore pins terminals nothing can reclaim: the pty pool drains
+/// one orphan at a time until the machine cannot open a terminal at all, and
+/// the processes holding them cannot be killed — they are already exiting,
+/// blocked revoking a controlling terminal another process still holds open.
+/// Only a reboot clears it.
+///
+/// `ls -l /dev/fd` names every descriptor the child actually has. A character
+/// device above fd 2 is a terminal that is not the child's own stdio, which is
+/// the leak; the child's own terminal is legitimately on 0, 1 and 2.
+///
+/// Revert check: restore the three-argument `fcntl` declaration and this fails
+/// naming a `0xf......` master on fd 3; drop the slave's `O_CLOEXEC` and it
+/// fails naming a `0x10.....` slave. Every other test here spawns and reads
+/// normally, and none of them observe either descriptor.
+#[cfg(unix)]
+#[test]
+fn the_child_inherits_no_terminal_but_its_own() {
+    let dir = make_temp_dir("fdleak");
+    let out = dir.join("fds");
+    let script = format!("ls -l /dev/fd > {} 2>&1", out.display());
+    let (cmd, args) = shell(&script);
+    let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+    let mut p = pty::Pty::spawn(cmd, &argv, 24, 80).expect("spawn pane");
+    let _ = read_until(&mut p, b"__never__", Duration::from_secs(5));
+    let _ = p.wait();
+
+    let listing = std::fs::read_to_string(&out).expect("child wrote its fd table");
+    let mut leaks = Vec::new();
+    for line in listing.lines() {
+        // "crw-rw-rw-  1 root  tty  0xf00000f  Sep  5 20:21 3": mode first,
+        // descriptor number last. Only character devices can be a terminal.
+        if !line.starts_with('c') {
+            continue;
+        }
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        let (Some(dev), Some(fd)) = (
+            fields.get(4),
+            fields.last().and_then(|f| f.parse::<u32>().ok()),
+        ) else {
+            continue;
+        };
+        if fd > 2 {
+            leaks.push(format!("fd {fd} -> device {dev}"));
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        leaks.is_empty(),
+        "child inherited terminals that are not its stdio:\n  {}\nfull table:\n{listing}",
+        leaks.join("\n  ")
+    );
+}
