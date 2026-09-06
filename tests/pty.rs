@@ -1,5 +1,5 @@
 //! Integration tests for `pty` against **real child processes** on a real
-//! pseudo-terminal — the only honest way to test this crate. Every test is
+//! pseudo-terminal: the only honest way to test this crate. Every test is
 //! deadline-bounded so a regression hangs the suite for seconds, not
 //! forever. Windows runs these locally; Linux runs them in CI.
 
@@ -160,7 +160,7 @@ fn spawn_of_missing_program_errors_cleanly() {
 
 /// Shell one-liner that prints the value of environment variable `name`,
 /// wrapped in unique markers so we can find it in the terminal's echo/prompt
-/// noise. Emits `[MK[VALUE]MK]` — square brackets, deliberately NOT `<`/`>`
+/// noise. Emits `[MK[VALUE]MK]`: square brackets, deliberately NOT `<`/`>`
 /// which cmd.exe would treat as redirection. Windows uses `echo`, Unix
 /// `printf`.
 fn echo_var(name: &str) -> String {
@@ -374,14 +374,14 @@ fn four_arg_spawn_still_inherits_env_unchanged() {
 /// is variadic in C, this crate declared it as a plain three-argument function,
 /// and on Apple ARM64 a variadic argument travels on the stack while a fixed one
 /// travels in a register. The flag never reaches the kernel, and `fcntl` still
-/// returns 0 — so the error check above it reports success on a call that did
+/// returns 0, so the error check above it reports success on a call that did
 /// nothing.
 ///
 /// So every child inherits the master of its own terminal, plus the raw slave
 /// descriptor `std` duplicated onto 0/1/2 and left open. A pane that outlives
 /// its amux therefore pins terminals nothing can reclaim: the pty pool drains
 /// one orphan at a time until the machine cannot open a terminal at all, and
-/// the processes holding them cannot be killed — they are already exiting,
+/// the processes holding them cannot be killed; they are already exiting,
 /// blocked revoking a controlling terminal another process still holds open.
 /// Only a reboot clears it.
 ///
