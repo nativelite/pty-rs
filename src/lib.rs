@@ -31,7 +31,7 @@
 //! one child alone, and can be started in a directory of the caller's
 //! choosing: the enabler for each agent auto-loading the `CLAUDE.md` in its
 //! own tree. Multiplexing, layout, scrollback, and session persistence stay
-//! out of scope; those are the `amux` product's concerns. One child, one
+//! out of scope; those are the `atrium` product's concerns. One child, one
 //! PTY, bytes in, bytes out.
 
 use std::io;

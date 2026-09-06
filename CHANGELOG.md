@@ -93,7 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detection, exit codes, kill/reap transitions, post-exit drain, clean
   failure for missing programs.
 
-Sixth crate of the nativelite **agent terminal** suite: the `amux`
+Sixth crate of the nativelite **agent terminal** suite: the `atrium`
 enabler (see `roadmap/agent-terminal-suite.md` in `nativelite/ops`).
 
 [Unreleased]: https://github.com/nativelite/pty-rs/compare/v0.3.0...HEAD

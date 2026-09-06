@@ -69,7 +69,7 @@ Semantics, stated plainly:
 
 ## What's deliberately out of scope
 
-Multiplexing, layout, scrollback, and session persistence: the `amux`
+Multiplexing, layout, scrollback, and session persistence: the `atrium`
 product's concerns. Per-child **env injection** (`spawn_with_env`) and a
 per-child **working directory** (`spawn_full`) are supported; everything above
 is not. One child, one PTY, bytes in, bytes out.
