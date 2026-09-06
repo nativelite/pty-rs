@@ -379,7 +379,7 @@ fn four_arg_spawn_still_inherits_env_unchanged() {
 ///
 /// So every child inherits the master of its own terminal, plus the raw slave
 /// descriptor `std` duplicated onto 0/1/2 and left open. A pane that outlives
-/// its amux therefore pins terminals nothing can reclaim: the pty pool drains
+/// its atrium therefore pins terminals nothing can reclaim: the pty pool drains
 /// one orphan at a time until the machine cannot open a terminal at all, and
 /// the processes holding them cannot be killed; they are already exiting,
 /// blocked revoking a controlling terminal another process still holds open.
