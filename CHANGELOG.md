@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     the flag was never applied: `fcntl` is variadic in C and was declared here
     as a plain three-argument function. On Apple ARM64 a variadic argument is
     passed on the stack while a fixed one is passed in a register, so the flag
-    the callee read was never the flag we sent — and `fcntl` returned 0, so the
+    the callee read was never the flag we sent, and `fcntl` returned 0, so the
     error check reported success on a call that did nothing. Now declared
     variadic, as `ioctl` beside it already was.
   - The **slave**. It was opened with no `FD_CLOEXEC` at all, so the spare
@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The effect was cumulative and, on macOS, unrecoverable without a reboot: a
   pane that outlived its parent pinned terminals nothing could reclaim, the pty
   pool drained one orphan at a time until the machine could not open a terminal
-  at all, and the processes holding them could not be killed — they were
+  at all, and the processes holding them could not be killed: they were
   already exiting, blocked revoking a controlling terminal another process
   still held open. Covered by
   `the_child_inherits_no_terminal_but_its_own`, which reads the child's own
@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - 2026-08-29
 
 ### Added
-- `Pty::spawn_full(cmd, args, rows, cols, env, cwd)` — the full spawn form,
+- `Pty::spawn_full(cmd, args, rows, cols, env, cwd)`: the full spawn form,
   adding a per-child **working directory** on top of env injection. `cwd`
   is `Option<&str>`: `Some(dir)` starts the child in `dir` (the enabler for
   a spawned agent auto-loading the `CLAUDE.md` in its own tree); `None`
@@ -55,7 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2026-08-29
 
 ### Added
-- `Pty::spawn_with_env(cmd, args, rows, cols, env)` — spawn with per-child
+- `Pty::spawn_with_env(cmd, args, rows, cols, env)`: spawn with per-child
   environment injection. The child's environment is the parent's environment
   **merged** with the caller's overrides (overrides win by key), so inherited
   variables like `PATH`/`SystemRoot` are preserved while credentials can be
@@ -74,11 +74,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.0] - 2026-08-28
 
 ### Added
-- `Pty::spawn(cmd, args, rows, cols)` — child on a fresh pseudo-terminal;
+- `Pty::spawn(cmd, args, rows, cols)`: child on a fresh pseudo-terminal;
   `read_timeout` (None/`Some(0)`/`Some(n)` semantics), `write`, `resize`,
   `wait`/`try_wait`/`kill`. Dropping releases the terminal without killing
   the child (std convention).
-- Windows backend: ConPTY via own kernel32 externs — `CreatePseudoConsole`
+- Windows backend: ConPTY via own kernel32 externs: `CreatePseudoConsole`
   + `PSEUDOCONSOLE` proc-thread attribute + `STARTF_USESTDHANDLES` with
   NULL handles (required when the parent's stdio is redirected, or child
   output bypasses the pty), `PeekNamedPipe` timeout polling, argv-correct
@@ -93,7 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   detection, exit codes, kill/reap transitions, post-exit drain, clean
   failure for missing programs.
 
-Sixth crate of the nativelite **agent terminal** suite — the `amux`
+Sixth crate of the nativelite **agent terminal** suite: the `amux`
 enabler (see `roadmap/agent-terminal-suite.md` in `nativelite/ops`).
 
 [Unreleased]: https://github.com/nativelite/pty-rs/compare/v0.3.0...HEAD

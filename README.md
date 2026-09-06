@@ -1,13 +1,13 @@
 # pty-rs
 **Spawn a child process on a real pseudo-terminal**, built entirely on the
-Rust standard library. **Zero dependencies** — no `libc`/`windows` crates:
+Rust standard library. **Zero dependencies**, no `libc`/`windows` crates:
 the OS boundary is this crate's own `extern` blocks. **ConPTY**
 (`CreatePseudoConsole`, Windows 10 1809+) on Windows; the classic POSIX pty
 (`posix_openpt`/`grantpt`/`unlockpt` + `setsid`/`TIOCSCTTY`) on Unix.
 
 A process on a PTY believes it is talking to a real terminal: it enables
 colors, draws progress UIs, and emits the VT byte stream a terminal would
-receive. That stream is exactly what this crate hands you — parse it with
+receive. That stream is exactly what this crate hands you: parse it with
 the [`ansi`](https://github.com/nativelite/ansi-rs) crate, or pipe it on.
 This is the enabler for hosting interactive CLIs (a coding agent, a shell)
 inside another program.
@@ -34,10 +34,10 @@ Semantics, stated plainly:
 
 - `read_timeout` → `None` timeout / `Some(0)` end-of-stream / `Some(n)`
   data. End-of-stream timing is platform-dependent (some Windows builds
-  keep the console open until drop) — output written before exit is always
+  keep the console open until drop); output written before exit is always
   drainable after `wait()`; drain with short timeouts.
 - Exit codes: a Unix child killed by a signal reports `128 + signo`.
-- Dropping a `Pty` releases the terminal but — like `std::process::Child` —
+- Dropping a `Pty` releases the terminal but, like `std::process::Child`,
   does **not** kill the child.
 - `spawn_with_env(cmd, args, rows, cols, env)` injects per-child environment
   variables: the child sees the **parent environment merged with `env`**
@@ -47,13 +47,13 @@ Semantics, stated plainly:
 - `spawn_full(cmd, args, rows, cols, env, cwd)` adds a per-child **working
   directory**: `cwd = Some(dir)` starts the child in `dir` (so a spawned
   agent auto-loads the `CLAUDE.md` in its own tree), `None` inherits the
-  parent's cwd. A nonexistent `cwd` is returned as an `io::Error` — no silent
+  parent's cwd. A nonexistent `cwd` is returned as an `io::Error`: no silent
   fallback. `spawn` and `spawn_with_env` are `spawn_full` with `cwd = None`.
 
 ## Platform notes (the hard-won bits)
 
 - **Windows:** the child is bound to the pseudoconsole via the
-  `PSEUDOCONSOLE` proc-thread attribute, and — crucially —
+  `PSEUDOCONSOLE` proc-thread attribute, and, crucially,
   `STARTF_USESTDHANDLES` with NULL handles, without which a child whose
   parent has redirected stdio (a test harness, a service) writes past the
   pty entirely. Timeouts poll `PeekNamedPipe` (anonymous pipes can't do
@@ -69,7 +69,7 @@ Semantics, stated plainly:
 
 ## What's deliberately out of scope
 
-Multiplexing, layout, scrollback, and session persistence — the `amux`
+Multiplexing, layout, scrollback, and session persistence: the `amux`
 product's concerns. Per-child **env injection** (`spawn_with_env`) and a
 per-child **working directory** (`spawn_full`) are supported; everything above
 is not. One child, one PTY, bytes in, bytes out.

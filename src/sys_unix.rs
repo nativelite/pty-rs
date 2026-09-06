@@ -1,4 +1,4 @@
-//! POSIX pty, via our own externs against the platform C library — no
+//! POSIX pty, via our own externs against the platform C library, with no
 //! `libc` crate. The master comes from `posix_openpt`; the child is spawned
 //! with `std::process::Command` whose stdio is the slave, made the
 //! controlling terminal in `pre_exec` (`setsid` + `TIOCSCTTY`). Timeouts
@@ -61,8 +61,8 @@ extern "C" {
     fn poll(fds: *mut PollFd, nfds: Nfds, timeout_ms: i32) -> i32;
     fn ioctl(fd: i32, request: u64, ...) -> i32;
     // Variadic, exactly as C declares it. As a plain `(i32, i32, i32)` the
-    // flag is passed in a register while the callee — on Apple ARM64, where
-    // variadic arguments travel on the stack — reads it from somewhere else
+    // flag is passed in a register while the callee (on Apple ARM64, where
+    // variadic arguments travel on the stack) reads it from somewhere else
     // entirely, and `fcntl` reports success on a call that set nothing. That is
     // how every pane child came to inherit its master. `ioctl` above is
     // declared variadic for the same reason.
@@ -290,7 +290,7 @@ impl Sys {
     /// [`Sys::spawn`] runs `setsid()` in `pre_exec`, so every child is a session
     /// leader and its **process-group id equals this pid**. That is what lets a
     /// caller tear down the child's whole tree with `killpg` instead of only the
-    /// process itself — an agent CLI's own subprocesses (MCP servers, language
+    /// process itself: an agent CLI's own subprocesses (MCP servers, language
     /// servers, node helpers) are in that group and are otherwise left behind,
     /// reparented to `init`, when the direct child is killed.
     pub fn pid(&self) -> u32 {

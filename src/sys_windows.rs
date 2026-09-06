@@ -72,7 +72,7 @@ extern "system" {
     fn ClosePseudoConsole(hpc: Handle);
     fn CloseHandle(handle: Handle) -> i32;
     /// Resolve a process id from its handle. The caller needs the id (not the
-    /// handle) to reopen the process — e.g. to assign it to a Job Object, which
+    /// handle) to reopen the process, e.g. to assign it to a Job Object, which
     /// is how a whole process tree is bounded on Windows.
     fn GetProcessId(process: Handle) -> u32;
     fn ReadFile(
@@ -202,12 +202,12 @@ fn quote_arg(arg: &str) -> String {
 /// environment merged with `overrides`.
 ///
 /// Semantics: start from `std::env::vars_os` (the parent set), then apply
-/// each override — later wins, and keys are matched **case-insensitively**
+/// each override; later wins, and keys are matched **case-insensitively**
 /// because Windows environment variables are (so `Path` overrides an
 /// inherited `PATH` rather than duplicating it). The final block is sorted
 /// case-insensitively by key, which `CreateProcessW` requires. Returns
 /// `None` when the merged environment is empty, so the caller can pass a
-/// NULL block (there is no valid zero-entry Unicode block — it would be just
+/// NULL block (there is no valid zero-entry Unicode block; it would be just
 /// the terminator, which is the "empty environment" sentinel we never want).
 fn build_env_block(overrides: &[(String, String)]) -> Option<Vec<u16>> {
     use std::collections::BTreeMap;
@@ -524,7 +524,7 @@ unsafe fn spawn_on_console(
         si.startup_info.cb = std::mem::size_of::<StartupInfoExW>() as u32;
         // NULL std handles + USESTDHANDLES: without this the child inherits
         // the parent's (possibly redirected) std handles and writes past the
-        // pseudoconsole. With it, the child falls back to its console — the
+        // pseudoconsole. With it, the child falls back to its console: the
         // pty we just attached.
         si.startup_info.flags = STARTF_USESTDHANDLES;
         si.attribute_list = attr_list;

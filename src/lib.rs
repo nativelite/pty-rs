@@ -1,12 +1,12 @@
-//! pty — spawn a child process on a real pseudo-terminal, on the Rust
+//! pty: spawn a child process on a real pseudo-terminal, on the Rust
 //! standard library alone. Zero dependencies, including no `libc`/`windows`
-//! crates: the OS boundary is this crate's own `extern` blocks — **ConPTY**
+//! crates: the OS boundary is this crate's own `extern` blocks. **ConPTY**
 //! (`CreatePseudoConsole`) on Windows, the classic POSIX pty
 //! (`posix_openpt`/`grantpt`/`unlockpt`) on Unix.
 //!
 //! A process on a PTY believes it is talking to a real terminal: it enables
 //! colors, renders progress UIs, and emits the VT byte stream a terminal
-//! would receive. That byte stream is exactly what this crate hands you —
+//! would receive. That byte stream is exactly what this crate hands you:
 //! parse it with the `ansi` crate, or pipe it somewhere. This is the
 //! enabler for hosting interactive CLIs (a coding agent, a shell) inside
 //! another program.
@@ -29,9 +29,9 @@
 //! [`Pty::spawn_full`]: the child sees the parent's environment merged with
 //! caller-supplied overrides (overrides win), so a credential can be set for
 //! one child alone, and can be started in a directory of the caller's
-//! choosing — the enabler for each agent auto-loading the `CLAUDE.md` in its
+//! choosing: the enabler for each agent auto-loading the `CLAUDE.md` in its
 //! own tree. Multiplexing, layout, scrollback, and session persistence stay
-//! out of scope — those are the `amux` product's concerns. One child, one
+//! out of scope; those are the `amux` product's concerns. One child, one
 //! PTY, bytes in, bytes out.
 
 use std::io;
@@ -46,8 +46,8 @@ mod sys;
 
 /// A child process attached to a pseudo-terminal.
 ///
-/// Dropping a `Pty` releases the terminal and our handles but — like
-/// `std::process::Child` — does **not** kill the child; call
+/// Dropping a `Pty` releases the terminal and our handles but, like
+/// `std::process::Child`, does **not** kill the child; call
 /// [`kill`](Pty::kill) or [`wait`](Pty::wait) for lifecycle control.
 pub struct Pty {
     sys: sys::Sys,
@@ -69,8 +69,8 @@ impl Pty {
     ///
     /// The child's environment is **this process's environment merged with
     /// `env`**, where an entry in `env` overrides (or adds) the value for its
-    /// key. Inherited variables the overrides do not name — `PATH`,
-    /// `SystemRoot`, and everything else — are preserved, so the child still
+    /// key. Inherited variables the overrides do not name (`PATH`,
+    /// `SystemRoot`, and everything else) are preserved, so the child still
     /// finds its runtime. This is the enabler for injecting credentials into
     /// one child without leaking them into the parent or its siblings.
     ///
@@ -104,7 +104,7 @@ impl Pty {
     /// - `None` inherits this process's working directory (today's behavior).
     ///
     /// A `cwd` that does not exist is surfaced as an [`io::Error`] from this
-    /// call — the child is not started in a fallback directory.
+    /// call; the child is not started in a fallback directory.
     pub fn spawn_full(
         cmd: &str,
         args: &[&str],
@@ -126,7 +126,7 @@ impl Pty {
     /// End-of-stream timing is platform-dependent: on Unix it follows the
     /// child closing the slave side; on Windows some builds keep the
     /// console open until this `Pty` is dropped. Output written before the
-    /// child exited is always still drainable after [`wait`](Pty::wait) —
+    /// child exited is always still drainable after [`wait`](Pty::wait);
     /// drain with short timeouts rather than waiting for `Some(0)`.
     pub fn read_timeout(&mut self, buf: &mut [u8], timeout: Duration) -> io::Result<Option<usize>> {
         self.sys.read_timeout(buf, timeout)
@@ -162,8 +162,8 @@ impl Pty {
     /// only, leaving anything that child spawned to be reparented and run on.
     /// On unix every child is a session leader (`setsid()` in `pre_exec`), so
     /// this pid doubles as the process-group id for `killpg`; on Windows it is
-    /// the id to reopen for a Job Object. The teardown *policy* — which signal,
-    /// how long to wait before escalating — belongs to the caller, not here.
+    /// the id to reopen for a Job Object. The teardown *policy* (which signal,
+    /// how long to wait before escalating) belongs to the caller, not here.
     pub fn pid(&self) -> u32 {
         self.sys.pid()
     }
