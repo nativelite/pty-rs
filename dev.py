@@ -3,9 +3,9 @@
 
 The same `python dev.py check` gate as every nativelite package, so the muscle
 memory is identical across languages. Here `check` is the zero-dependency guard
-plus `cargo test` (unit + integration + doctests):
+plus `cargo fmt --check` and `cargo test` (unit + integration + doctests):
 
-  python dev.py check                 # guard + cargo test (what CI runs)
+  python dev.py check                 # guard + cargo fmt --check + cargo test
   python dev.py test                  # cargo test
   python dev.py build                 # cargo build --release
   python dev.py fmt                   # cargo fmt --check
@@ -43,7 +43,7 @@ def guard() -> int:
 
 
 def check() -> int:
-    return guard() or test()
+    return guard() or fmt() or test()
 
 
 COMMANDS = {"test": test, "build": build, "fmt": fmt, "guard": guard, "check": check}
