@@ -37,6 +37,8 @@
 use std::io;
 use std::time::Duration;
 
+pub mod cmdline;
+
 #[cfg(windows)]
 #[path = "sys_windows.rs"]
 mod sys;

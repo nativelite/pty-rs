@@ -431,3 +431,89 @@ fn the_child_inherits_no_terminal_but_its_own() {
         leaks.join("\n  ")
     );
 }
+
+/// Env var naming the file [`argv_dump_helper`] writes its arguments to. Unset
+/// in a normal run, where the helper is a no-op.
+#[cfg(windows)]
+const ARGV_DUMP_OUT: &str = "PTY_TEST_ARGV_DUMP_OUT";
+
+/// Not a real test: the batch-shim test launches THIS test binary through a
+/// `.cmd` file as `<exe> argv_dump_helper --exact -- <args...>`. libtest treats
+/// everything after `--` as name filters (never an error), `--exact` runs only
+/// this function, and it records what the process actually received after `--`
+/// — parsed by Rust's CRT-compatible argv rules, the same rules node uses.
+#[cfg(windows)]
+#[test]
+fn argv_dump_helper() {
+    let Some(out) = std::env::var_os(ARGV_DUMP_OUT) else {
+        return;
+    };
+    let args: Vec<String> = std::env::args().collect();
+    let after = args
+        .iter()
+        .position(|a| a == "--")
+        .map_or(args.len(), |i| i + 1);
+    let body: String = args[after..].iter().map(|a| format!("{a}\n")).collect();
+    std::fs::write(out, body).unwrap();
+}
+
+/// A `.cmd` shim (the shape npm installs for node CLIs, Claude Code's
+/// included) receives every argument intact: cmd.exe metacharacters, `%VAR%`,
+/// quotes and trailing backslashes must neither split the line — silently
+/// dropping every argument after a bare `&` — nor be expanded or mangled.
+#[cfg(windows)]
+#[test]
+fn batch_shim_receives_hostile_arguments_intact() {
+    let exe = std::env::current_exe().unwrap();
+    let dir = make_temp_dir("batch-shim");
+    let shim = dir.join("shim.cmd");
+    std::fs::write(
+        &shim,
+        format!(
+            "@SETLOCAL\r\n@\"{}\" argv_dump_helper --exact -- %*\r\n",
+            strip_verbatim(&exe.to_string_lossy())
+        ),
+    )
+    .unwrap();
+    let out = dir.join("argv.txt");
+    let _ = std::fs::remove_file(&out);
+
+    let bs = char::from(0x5c); // backslash
+    let args: Vec<String> = vec![
+        "-p".into(),
+        "a & b".into(),
+        "feat/a&b".into(),
+        "x|y".into(),
+        "p>q".into(),
+        "<in".into(),
+        "c^d".into(),
+        "(paren)".into(),
+        "100%".into(),
+        "%PATH%".into(),
+        "%USERPROFILE% and %cd%".into(),
+        "say \"hi\" & bye".into(),
+        "\"".into(),
+        format!("q{bs}\"x"),
+        format!("trail{bs}"),
+        format!("C:{bs}dir{bs}"),
+        "bang!".into(),
+        "unicode \u{2713} \u{65e5}\u{672c}".into(),
+        String::new(),
+        "--permission-mode".into(),
+        "auto".into(),
+    ];
+    let out_s = strip_verbatim(&out.to_string_lossy()).to_string();
+    let shim_s = strip_verbatim(&shim.to_string_lossy()).to_string();
+    let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+    let env = vec![(ARGV_DUMP_OUT.to_string(), out_s)];
+
+    let mut p = pty::Pty::spawn_with_env(&shim_s, &argv, 24, 80, &env).unwrap();
+    let _ = read_until(&mut p, b"\0never\0", Duration::from_secs(1));
+    assert_eq!(p.wait().unwrap(), 0);
+
+    let got = std::fs::read_to_string(&out).expect("shim target never ran");
+    let got: Vec<&str> = got.split('\n').collect();
+    let want: Vec<&str> = args.iter().map(String::as_str).chain([""]).collect();
+    assert_eq!(got, want);
+    let _ = std::fs::remove_dir_all(&dir);
+}

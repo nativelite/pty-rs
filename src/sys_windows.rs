@@ -254,6 +254,26 @@ pub fn build_command_line(cmd: &str, args: &[&str]) -> String {
     line
 }
 
+/// The command line for spawning `cmd` with `args`. A `.cmd`/`.bat` target runs
+/// under the system `cmd.exe` with batch-safe argument encoding
+/// ([`crate::cmdline`]) — argv quoting alone lets cmd.exe split the line at a
+/// bare `&`/`|` and expand `%VAR%`. Anything else uses argv quoting.
+fn spawn_command_line(cmd: &str, args: &[&str]) -> io::Result<String> {
+    if !crate::cmdline::is_batch(cmd) {
+        return Ok(build_command_line(cmd, args));
+    }
+    // The system cmd.exe by full path, never a `cmd.exe` found first in the
+    // child's working directory.
+    let cmd_exe = match std::env::var_os("SystemRoot") {
+        Some(root) => {
+            let path = std::path::Path::new(&root).join("System32").join("cmd.exe");
+            quote_arg(&path.to_string_lossy())
+        }
+        None => "cmd.exe".to_string(),
+    };
+    crate::cmdline::batch_command_line(&cmd_exe, cmd, args)
+}
+
 impl Sys {
     pub fn spawn_full(
         cmd: &str,
@@ -529,7 +549,7 @@ unsafe fn spawn_on_console(
         si.startup_info.flags = STARTF_USESTDHANDLES;
         si.attribute_list = attr_list;
         let mut pi: ProcessInformation = std::mem::zeroed();
-        let mut cmdline = wide(std::ffi::OsStr::new(&build_command_line(cmd, args)));
+        let mut cmdline = wide(std::ffi::OsStr::new(&spawn_command_line(cmd, args)?));
         // Merged (parent + overrides) Unicode environment block. `env_block`
         // must outlive the call; a `None` merged env means pass NULL (inherit
         // verbatim), matching the old behavior when there are no overrides and

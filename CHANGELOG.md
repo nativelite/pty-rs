@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`pty::cmdline`**: `is_batch`, `quote_batch_arg`, `batch_command_line` — the
+  cmd.exe-safe argument encoding (the rules Rust std adopted for batch files
+  after CVE-2024-24576), public so callers building their own `cmd /c` lines
+  share one implementation.
+
 ### Fixed
+- **A `.cmd`/`.bat` target now receives its arguments intact** (windows).
+  Batch files run under `cmd.exe`, which parses the command line itself, but
+  `spawn` quoted arguments only by argv rules: an argument containing a bare
+  `&`, `|`, `<`, `>` or `^` split the line (every later argument silently
+  dropped, or the child died on launch) and `%NAME%` was expanded. npm CLI shims
+  — Claude Code's `claude.cmd` — are batch files, so a prompt or branch name
+  like `a & b` broke the launch. `spawn` now runs batch targets as
+  `<SystemRoot>\System32\cmd.exe /e:ON /v:OFF /d /c ""script" args…"` with every
+  argument quoted/escaped, `"` doubled and `%` defused; CR/LF/NUL are rejected
+  with `InvalidInput`. Verified end to end: 21 hostile arguments through a real
+  `%*`-forwarding shim round-trip exactly (the test fails with exit 255 without
+  the fix).
 - **Pane children no longer inherit terminals that are not their own** (unix).
   Two descriptors leaked into every spawned child:
   - The **master**. `spawn` set `FD_CLOEXEC` on it and checked the result, but
