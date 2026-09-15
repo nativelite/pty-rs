@@ -56,6 +56,43 @@ fn child_output_arrives_through_the_terminal() {
     p.wait().unwrap();
 }
 
+/// A suspended child exists (it has a pid, it can be put in a Job Object) but
+/// runs nothing until `resume`: no output, no exit. Then it runs normally.
+#[cfg(windows)]
+#[test]
+fn a_suspended_child_runs_only_once_resumed() {
+    let (cmd, args) = shell("echo pty-suspended-marker");
+    let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let mut p = pty::Pty::spawn_suspended(cmd, &argrefs, 24, 80, &[], None).unwrap();
+    assert_ne!(p.pid(), 0, "a suspended child already has a pid");
+    let early = read_until(&mut p, b"pty-suspended-marker", Duration::from_millis(800));
+    assert!(
+        !windows_contains(&early, b"pty-suspended-marker"),
+        "ran before resume: {:?}",
+        String::from_utf8_lossy(&early)
+    );
+    assert_eq!(p.try_wait().unwrap(), None, "exited before resume");
+    p.resume().unwrap();
+    let out = read_until(&mut p, b"pty-suspended-marker", Duration::from_secs(10));
+    assert!(
+        windows_contains(&out, b"pty-suspended-marker"),
+        "no output after resume: {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    assert_eq!(p.wait().unwrap(), 0);
+}
+
+/// A suspended child that is never resumed can still be killed.
+#[cfg(windows)]
+#[test]
+fn a_suspended_child_can_be_killed_without_resuming() {
+    let (cmd, args) = shell("echo never");
+    let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let mut p = pty::Pty::spawn_suspended(cmd, &argrefs, 24, 80, &[], None).unwrap();
+    p.kill().unwrap();
+    assert_eq!(p.wait().unwrap(), 1);
+}
+
 #[test]
 fn exit_codes_are_reported() {
     let (cmd, args) = shell("exit 3");

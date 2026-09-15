@@ -118,6 +118,8 @@ impl Sys {
         cols: u16,
         env: &[(String, String)],
         cwd: Option<&str>,
+        // Only Windows can create a child suspended; see `Pty::spawn_suspended`.
+        _suspended: bool,
     ) -> io::Result<Sys> {
         // Fail fast on a nonexistent cwd. `Command::current_dir` defers the
         // chdir to the child, where a failure would surface only as a generic

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`Pty::spawn_suspended` and `Pty::resume`** (windows). The child is created
+  with `CREATE_SUSPENDED`: it has a pid and can be assigned to a Job Object, but
+  runs no code until `resume`. Without it a caller assigns a job only after the
+  child has started, and any process the child created in between is outside
+  the job for good. Tested: a suspended `echo` produces no output and does not
+  exit until resumed, then runs to exit 0; a never-resumed child can be killed.
+
 ## [0.4.0] - 2026-09-14
 
 ### Added

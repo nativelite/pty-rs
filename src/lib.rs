@@ -116,8 +116,43 @@ impl Pty {
         cwd: Option<&str>,
     ) -> io::Result<Pty> {
         Ok(Pty {
-            sys: sys::Sys::spawn_full(cmd, args, rows, cols, env, cwd)?,
+            sys: sys::Sys::spawn_full(cmd, args, rows, cols, env, cwd, false)?,
         })
+    }
+
+    /// Windows only: [`spawn_full`](Pty::spawn_full), but the child is created
+    /// **suspended** (`CREATE_SUSPENDED`): it exists and has a [`pid`](Pty::pid),
+    /// but runs no code until [`resume`](Pty::resume).
+    ///
+    /// This closes a race a caller can't close any other way: a process assigned
+    /// to a Job Object after it starts may already have created children, and
+    /// those are never in the job. Spawn suspended, assign, then resume, and the
+    /// whole tree is inside from its first instruction.
+    ///
+    /// A suspended child that is never resumed stays suspended until it is
+    /// [`kill`](Pty::kill)ed; dropping the `Pty` does not resume it.
+    ///
+    /// Unix has no equivalent here: `std::process::Command::spawn` returns only
+    /// after the child has exec'd, so a child can't be held before it runs.
+    #[cfg(windows)]
+    pub fn spawn_suspended(
+        cmd: &str,
+        args: &[&str],
+        rows: u16,
+        cols: u16,
+        env: &[(String, String)],
+        cwd: Option<&str>,
+    ) -> io::Result<Pty> {
+        Ok(Pty {
+            sys: sys::Sys::spawn_full(cmd, args, rows, cols, env, cwd, true)?,
+        })
+    }
+
+    /// Windows only: let a child from [`spawn_suspended`](Pty::spawn_suspended)
+    /// start running. Resuming a child that is already running changes nothing.
+    #[cfg(windows)]
+    pub fn resume(&mut self) -> io::Result<()> {
+        self.sys.resume()
     }
 
     /// Read output the child wrote to its terminal.

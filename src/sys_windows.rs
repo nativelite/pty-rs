@@ -116,6 +116,7 @@ extern "system" {
         return_size: *mut usize,
     ) -> i32;
     fn DeleteProcThreadAttributeList(list: *mut c_void);
+    fn ResumeThread(thread: Handle) -> u32;
     fn CreateProcessW(
         application: *const u16,
         command_line: *mut u16,
@@ -133,6 +134,7 @@ extern "system" {
 const PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE: usize = 0x0002_0016;
 const EXTENDED_STARTUPINFO_PRESENT: u32 = 0x0008_0000;
 const CREATE_UNICODE_ENVIRONMENT: u32 = 0x0000_0400;
+const CREATE_SUSPENDED: u32 = 0x0000_0004;
 const STARTF_USESTDHANDLES: u32 = 0x0000_0100;
 const ERROR_INSUFFICIENT_BUFFER: i32 = 122;
 const ERROR_BROKEN_PIPE: i32 = 109;
@@ -282,6 +284,7 @@ impl Sys {
         cols: u16,
         env: &[(String, String)],
         cwd: Option<&str>,
+        suspended: bool,
     ) -> io::Result<Sys> {
         // Fail fast on a nonexistent cwd: CreateProcessW reports this as
         // ERROR_DIRECTORY, but checking up front lets us surface a clear
@@ -330,7 +333,7 @@ impl Sys {
                 ));
             }
 
-            match spawn_on_console(hpc, cmd, args, env, cwd) {
+            match spawn_on_console(hpc, cmd, args, env, cwd, suspended) {
                 Ok((process, thread)) => Ok(Sys {
                     hpc,
                     input_write: in_write,
@@ -398,6 +401,15 @@ impl Sys {
             }
             std::thread::sleep(PEEK_STEP.min(deadline.saturating_duration_since(Instant::now())));
         }
+    }
+
+    /// Start a child created with `CREATE_SUSPENDED`. `ResumeThread` returns the
+    /// previous suspend count, 0 for a thread that was already running.
+    pub fn resume(&mut self) -> io::Result<()> {
+        if unsafe { ResumeThread(self.thread) } == u32::MAX {
+            return Err(last_err());
+        }
+        Ok(())
     }
 
     pub fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
@@ -515,6 +527,7 @@ unsafe fn spawn_on_console(
     args: &[&str],
     env: &[(String, String)],
     cwd: Option<&str>,
+    suspended: bool,
 ) -> io::Result<(Handle, Handle)> {
     let mut attr_size: usize = 0;
     InitializeProcThreadAttributeList(std::ptr::null_mut(), 1, 0, &mut attr_size);
@@ -561,6 +574,11 @@ unsafe fn spawn_on_console(
                 EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
             ),
             None => (std::ptr::null_mut(), EXTENDED_STARTUPINFO_PRESENT),
+        };
+        let creation_flags = if suspended {
+            creation_flags | CREATE_SUSPENDED
+        } else {
+            creation_flags
         };
         // lpCurrentDirectory: a UTF-16, null-terminated directory when the
         // caller gave a cwd, else NULL (inherit the parent's). `dir_wide`

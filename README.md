@@ -49,6 +49,11 @@ Semantics, stated plainly:
   agent auto-loads the `CLAUDE.md` in its own tree), `None` inherits the
   parent's cwd. A nonexistent `cwd` is returned as an `io::Error`: no silent
   fallback. `spawn` and `spawn_with_env` are `spawn_full` with `cwd = None`.
+- `spawn_suspended(cmd, args, rows, cols, env, cwd)` + `resume()` (**Windows
+  only**) create the child with `CREATE_SUSPENDED`: it has a pid but runs
+  nothing until resumed, so a caller can put it in a Job Object before it can
+  start children of its own. A child never resumed stays suspended until
+  killed. Unix has no equivalent: `std`'s spawn returns only after `exec`.
 
 ## Platform notes (the hard-won bits)
 
