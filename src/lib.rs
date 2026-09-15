@@ -55,6 +55,25 @@ pub struct Pty {
     sys: sys::Sys,
 }
 
+/// A blocking reader over a [`Pty`]'s output. See [`Pty::reader`].
+pub struct PtyReader {
+    sys: sys::Reader,
+}
+
+impl PtyReader {
+    /// Block until the child writes, and return how many bytes were read into
+    /// `buf`. `Ok(0)` is end of stream (see [`Pty::reader`]).
+    pub fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.sys.read(buf)
+    }
+}
+
+impl io::Read for PtyReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.sys.read(buf)
+    }
+}
+
 impl Pty {
     /// Spawn `cmd` with `args` on a fresh pseudo-terminal of the given
     /// size. The child inherits this process's environment and working
@@ -153,6 +172,27 @@ impl Pty {
     #[cfg(windows)]
     pub fn resume(&mut self) -> io::Result<()> {
         self.sys.resume()
+    }
+
+    /// A reader over this terminal's output that **blocks** until bytes arrive,
+    /// for a thread of its own: a host multiplexing many terminals then wakes
+    /// the moment any of them writes, instead of polling each with
+    /// [`read_timeout`](Pty::read_timeout).
+    ///
+    /// The reader is independent of the `Pty` (it holds a duplicate of the
+    /// output handle) and is [`Send`]. Rules, stated plainly:
+    ///
+    /// - Use one or the other. A reader and `read_timeout` on the same `Pty`
+    ///   would split the stream between them.
+    /// - [`PtyReader::read`] returns `Ok(0)` at end of stream: the child's side
+    ///   closed, or (unix) the `Pty` was dropped, noticed within 100 ms.
+    /// - **Windows:** keep reading, or drop the reader, before dropping the
+    ///   `Pty`. Dropping a `Pty` waits for the console host to finish writing, and
+    ///   a reader that holds the pipe open without reading can leave it waiting.
+    pub fn reader(&self) -> io::Result<PtyReader> {
+        Ok(PtyReader {
+            sys: self.sys.reader()?,
+        })
     }
 
     /// Read output the child wrote to its terminal.

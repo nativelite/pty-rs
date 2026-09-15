@@ -117,6 +117,16 @@ extern "system" {
     ) -> i32;
     fn DeleteProcThreadAttributeList(list: *mut c_void);
     fn ResumeThread(thread: Handle) -> u32;
+    fn GetCurrentProcess() -> Handle;
+    fn DuplicateHandle(
+        source_process: Handle,
+        source: Handle,
+        target_process: Handle,
+        target: *mut Handle,
+        access: u32,
+        inherit: i32,
+        options: u32,
+    ) -> i32;
     fn CreateProcessW(
         application: *const u16,
         command_line: *mut u16,
@@ -159,6 +169,60 @@ pub struct Sys {
 
 // Raw handles are owned exclusively by this struct.
 unsafe impl Send for Sys {}
+
+const DUPLICATE_SAME_ACCESS: u32 = 0x0000_0002;
+
+/// A blocking reader over a duplicate of the output pipe's read end.
+pub struct Reader {
+    handle: Handle,
+}
+
+// The duplicated handle is owned exclusively by this struct.
+unsafe impl Send for Reader {}
+
+impl Reader {
+    /// Block until output arrives. `Ok(0)` is end of stream: the pseudoconsole
+    /// closed its end (`ERROR_BROKEN_PIPE`).
+    pub fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            let mut read: u32 = 0;
+            let want = buf.len().min(u32::MAX as usize) as u32;
+            let ok = unsafe {
+                ReadFile(
+                    self.handle,
+                    buf.as_mut_ptr(),
+                    want,
+                    &mut read,
+                    std::ptr::null_mut(),
+                )
+            };
+            if ok == 0 {
+                let e = last_err();
+                return if e.raw_os_error() == Some(ERROR_BROKEN_PIPE) {
+                    Ok(0)
+                } else {
+                    Err(e)
+                };
+            }
+            // A successful zero-byte read is a zero-length write, not the end
+            // of the stream: keep waiting for real bytes.
+            if read > 0 {
+                return Ok(read as usize);
+            }
+        }
+    }
+}
+
+impl Drop for Reader {
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.handle);
+        }
+    }
+}
 
 fn last_err() -> io::Error {
     io::Error::last_os_error()
@@ -401,6 +465,27 @@ impl Sys {
             }
             std::thread::sleep(PEEK_STEP.min(deadline.saturating_duration_since(Instant::now())));
         }
+    }
+
+    /// A blocking reader over the output, for a thread of its own.
+    pub fn reader(&self) -> io::Result<Reader> {
+        let mut handle: Handle = std::ptr::null_mut();
+        let ok = unsafe {
+            let me = GetCurrentProcess();
+            DuplicateHandle(
+                me,
+                self.output_read,
+                me,
+                &mut handle,
+                0,
+                0,
+                DUPLICATE_SAME_ACCESS,
+            )
+        };
+        if ok == 0 {
+            return Err(last_err());
+        }
+        Ok(Reader { handle })
     }
 
     /// Start a child created with `CREATE_SUSPENDED`. `ResumeThread` returns the

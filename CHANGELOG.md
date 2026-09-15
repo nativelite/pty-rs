@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`Pty::reader` → `PtyReader`**, a blocking reader over the output for a
+  thread of its own (`Send`, implements `io::Read`). `read_timeout` on Windows
+  is `PeekNamedPipe` plus sleep, so a host polling many terminals pays a sleep
+  per terminal per pass; with a reader thread per terminal it wakes the moment
+  any writes. Windows reads a duplicate of the output pipe with a blocking
+  `ReadFile` (`ERROR_BROKEN_PIPE` is end of stream); unix polls a duplicate of
+  the master and also ends once the `Pty` is dropped, so a grandchild holding
+  the slave can't pin the thread. Tested on Windows and Linux: output arrives on
+  the reader thread, dropping the `Pty` doesn't hang, and the reader reaches end
+  of stream.
 - **`Pty::spawn_suspended` and `Pty::resume`** (windows). The child is created
   with `CREATE_SUSPENDED`: it has a pid and can be assigned to a Job Object, but
   runs no code until `resume`. Without it a caller assigns a job only after the

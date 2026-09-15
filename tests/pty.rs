@@ -93,6 +93,66 @@ fn a_suspended_child_can_be_killed_without_resuming() {
     assert_eq!(p.wait().unwrap(), 1);
 }
 
+/// A reader on its own thread receives the child's output as it is written,
+/// and reports end of stream once the child is gone and the `Pty` dropped.
+#[test]
+fn a_reader_thread_gets_output_and_then_end_of_stream() {
+    let (cmd, args) = shell("echo pty-reader-marker");
+    let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let mut p = pty::Pty::spawn(cmd, &argrefs, 24, 80).unwrap();
+    let mut reader = p.reader().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    let t = std::thread::spawn(move || {
+        let mut buf = [0u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => {
+                    let _ = tx.send(Vec::new());
+                    return;
+                }
+                Ok(n) => {
+                    if tx.send(buf[..n].to_vec()).is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+    });
+    let mut out = Vec::new();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !windows_contains(&out, b"pty-reader-marker") && Instant::now() < deadline {
+        if let Ok(chunk) = rx.recv_timeout(Duration::from_millis(200)) {
+            out.extend_from_slice(&chunk);
+        }
+    }
+    assert!(
+        windows_contains(&out, b"pty-reader-marker"),
+        "output: {:?}",
+        String::from_utf8_lossy(&out)
+    );
+    assert_eq!(p.wait().unwrap(), 0);
+    // Dropping the Pty must neither hang (the reader keeps draining) nor leave
+    // the reader blocked: it reaches end of stream.
+    let dropped = Instant::now();
+    drop(p);
+    assert!(dropped.elapsed() < Duration::from_secs(5), "drop hung");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut eof = false;
+    while Instant::now() < deadline {
+        match rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(chunk) if chunk.is_empty() => {
+                eof = true;
+                break;
+            }
+            Ok(_) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(_) => {}
+        }
+    }
+    assert!(eof, "the reader never reached end of stream");
+    t.join().unwrap();
+}
+
 #[test]
 fn exit_codes_are_reported() {
     let (cmd, args) = shell("exit 3");

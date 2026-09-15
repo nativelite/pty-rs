@@ -49,6 +49,12 @@ Semantics, stated plainly:
   agent auto-loads the `CLAUDE.md` in its own tree), `None` inherits the
   parent's cwd. A nonexistent `cwd` is returned as an `io::Error`: no silent
   fallback. `spawn` and `spawn_with_env` are `spawn_full` with `cwd = None`.
+- `reader()` returns a `PtyReader` (`Send`, `io::Read`) whose `read` **blocks**
+  until output arrives, for a thread of its own: a host watching many
+  terminals wakes the moment any of them writes instead of polling each. Use a
+  reader or `read_timeout`, not both. `Ok(0)` is end of stream (on unix also
+  once the `Pty` is dropped). On Windows keep reading, or drop the reader,
+  before dropping the `Pty`.
 - `spawn_suspended(cmd, args, rows, cols, env, cwd)` + `resume()` (**Windows
   only**) create the child with `CREATE_SUSPENDED`: it has a pid but runs
   nothing until resumed, so a caller can put it in a Job Object before it can

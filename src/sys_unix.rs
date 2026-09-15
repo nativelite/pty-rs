@@ -15,6 +15,7 @@ mod plat {
     pub const O_CLOEXEC: i32 = 0o2_000_000;
     pub const TIOCSCTTY: u64 = 0x540E;
     pub const TIOCSWINSZ: u64 = 0x5414;
+    pub const F_DUPFD_CLOEXEC: i32 = 1030;
     pub type Nfds = u64;
 }
 
@@ -24,6 +25,7 @@ mod plat {
     pub const O_CLOEXEC: i32 = 0x100_0000;
     pub const TIOCSCTTY: u64 = 0x2000_7461;
     pub const TIOCSWINSZ: u64 = 0x8008_7467;
+    pub const F_DUPFD_CLOEXEC: i32 = 67;
     pub type Nfds = u32;
 }
 
@@ -108,6 +110,71 @@ fn slave_path(master: i32) -> io::Result<Vec<u8>> {
 pub struct Sys {
     master: i32,
     child: std::process::Child,
+    /// Cleared when this `Sys` drops, so a [`Reader`] over a duplicate of the
+    /// master stops even if something else still holds the slave open.
+    alive: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// How often a blocked [`Reader`] checks whether its `Sys` is gone.
+const READER_CHECK_MS: i32 = 100;
+
+/// A blocking reader over a duplicate of the master.
+pub struct Reader {
+    fd: i32,
+    alive: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Reader {
+    /// Block until output arrives. `Ok(0)` is end of stream: the slave side is
+    /// gone (`EIO`), or the `Sys` this reader came from was dropped.
+    pub fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        loop {
+            if !self.alive.load(std::sync::atomic::Ordering::SeqCst) {
+                return Ok(0);
+            }
+            let mut fds = PollFd {
+                fd: self.fd,
+                events: POLLIN,
+                revents: 0,
+            };
+            let n = unsafe { poll(&mut fds, 1, READER_CHECK_MS) };
+            if n < 0 {
+                let e = io::Error::last_os_error();
+                if e.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(e);
+            }
+            if n == 0 || fds.revents & (POLLIN | POLLHUP) == 0 {
+                continue;
+            }
+            let got = unsafe { read(self.fd, buf.as_mut_ptr(), buf.len()) };
+            if got < 0 {
+                let e = io::Error::last_os_error();
+                if e.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                // EIO from a pty master means the slave side is gone: EOF.
+                return if e.raw_os_error() == Some(5) {
+                    Ok(0)
+                } else {
+                    Err(e)
+                };
+            }
+            return Ok(got as usize);
+        }
+    }
+}
+
+impl Drop for Reader {
+    fn drop(&mut self) {
+        unsafe {
+            close(self.fd);
+        }
+    }
 }
 
 impl Sys {
@@ -164,6 +231,7 @@ impl Sys {
         }
         let mut sys = Sys {
             master,
+            alive: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             // placeholder replaced below; construct after fds are ready
             child: {
                 let stdin = unsafe { std::fs::File::from_raw_fd(slave) };
@@ -257,6 +325,18 @@ impl Sys {
         Ok(Some(got as usize))
     }
 
+    /// A blocking reader over the output, for a thread of its own.
+    pub fn reader(&self) -> io::Result<Reader> {
+        let fd = unsafe { fcntl(self.master, F_DUPFD_CLOEXEC, 0) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Reader {
+            fd,
+            alive: self.alive.clone(),
+        })
+    }
+
     pub fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         let n = unsafe { write(self.master, bytes.as_ptr(), bytes.len()) };
         if n < 0 {
@@ -319,6 +399,7 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
 
 impl Drop for Sys {
     fn drop(&mut self) {
+        self.alive.store(false, std::sync::atomic::Ordering::SeqCst);
         unsafe {
             close(self.master);
         }
