@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`use_conpty_library(dll)` (Windows): host ptys with another ConPTY.**
+  `CreatePseudoConsole` in kernel32 always starts the system's `conhost.exe`.
+  This loads a `conpty.dll` that exports the drop-in `Conpty*` versions of the
+  three pseudo-console calls — Windows Terminal's does, and starts the
+  `OpenConsole.exe` beside it — and routes every pty the process creates
+  afterwards through it. Opt-in and process-wide; without it nothing changes.
+  `conpty_library()` reports which is in use. A missing DLL, or one without the
+  `Conpty*` exports, is refused rather than half-loaded.
+  - Why it matters, measured by foldwave's experiment E2 on an i5-12600K with
+    Windows 11 26200 and the ConPTY 1.24.260710001 package: OpenConsole moved
+    3x the throughput of the built-in host (16 panes: 433-444 vs 144-145
+    MiB/s) at a sixth of the host CPU per byte, and has no ~15 ms output
+    coalescing tick.
+  - **A host that uses it must answer terminal queries.** OpenConsole opens
+    every session with a Primary Device Attributes request (`ESC [ c`) and
+    draws nothing until it is answered; the built-in host never asks.
+
 ## [0.4.1] - 2026-09-15
 
 ### Added

@@ -46,6 +46,27 @@ mod sys;
 #[path = "sys_unix.rs"]
 mod sys;
 
+/// Host every pseudo-console this process creates from now on with the ConPTY
+/// implementation in `dll`, instead of the system's `conhost.exe` (Windows
+/// only).
+///
+/// Windows Terminal's `conpty.dll` (MIT, also published on NuGet as
+/// `Microsoft.Windows.Console.ConPTY`) starts the `OpenConsole.exe` next to
+/// it, a newer console host than the one in Windows. Call this before the
+/// first spawn; it is process-wide and cannot be undone. Calling it again with
+/// the same path is a no-op, and with a different path is an error.
+#[cfg(windows)]
+pub fn use_conpty_library(dll: &std::path::Path) -> io::Result<()> {
+    sys::use_conpty_library(dll)
+}
+
+/// The ConPTY library set with [`use_conpty_library`], or `None` when the
+/// system's console host is in use (Windows only).
+#[cfg(windows)]
+pub fn conpty_library() -> Option<std::path::PathBuf> {
+    sys::conpty_library()
+}
+
 /// A child process attached to a pseudo-terminal.
 ///
 /// Dropping a `Pty` releases the terminal and our handles but, like

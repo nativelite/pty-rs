@@ -10,6 +10,8 @@
 use std::ffi::c_void;
 use std::io;
 use std::os::windows::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 type Handle = *mut c_void;
@@ -70,6 +72,8 @@ extern "system" {
     ) -> i32;
     fn ResizePseudoConsole(hpc: Handle, size: Coord) -> i32;
     fn ClosePseudoConsole(hpc: Handle);
+    fn LoadLibraryExW(name: *const u16, file: Handle, flags: u32) -> Handle;
+    fn GetProcAddress(module: Handle, name: *const u8) -> *mut c_void;
     fn CloseHandle(handle: Handle) -> i32;
     /// Resolve a process id from its handle. The caller needs the id (not the
     /// handle) to reopen the process, e.g. to assign it to a Job Object, which
@@ -384,7 +388,7 @@ impl Sys {
                 y: rows as i16,
             };
             let mut hpc: Handle = std::ptr::null_mut();
-            let hr = CreatePseudoConsole(size, in_read, out_write, 0, &mut hpc);
+            let hr = create_pseudo_console(size, in_read, out_write, &mut hpc);
             // The console owns duplicates now; ours can go.
             CloseHandle(in_read);
             CloseHandle(out_write);
@@ -407,7 +411,7 @@ impl Sys {
                     exit_code: None,
                 }),
                 Err(e) => {
-                    ClosePseudoConsole(hpc);
+                    close_pseudo_console(hpc);
                     CloseHandle(in_write);
                     CloseHandle(out_read);
                     Err(e)
@@ -516,7 +520,7 @@ impl Sys {
 
     pub fn resize(&mut self, rows: u16, cols: u16) -> io::Result<()> {
         let hr = unsafe {
-            ResizePseudoConsole(
+            resize_pseudo_console(
                 self.hpc,
                 Coord {
                     x: cols as i16,
@@ -598,7 +602,7 @@ impl Drop for Sys {
             // pipe nobody is reading. Breaking the pipes unblocks it.
             CloseHandle(self.input_write);
             CloseHandle(self.output_read);
-            ClosePseudoConsole(self.hpc);
+            close_pseudo_console(self.hpc);
             CloseHandle(self.thread);
             CloseHandle(self.process);
         }
@@ -694,6 +698,125 @@ unsafe fn spawn_on_console(
     result
 }
 
+// --- Alternative ConPTY implementations --------------------------------------
+//
+// `CreatePseudoConsole` in kernel32 always starts the system's `conhost.exe`.
+// Windows Terminal ships its own console host, OpenConsole (MIT), launched by
+// a `conpty.dll` that exports drop-in `Conpty*` versions of the same three
+// calls and starts the `OpenConsole.exe` beside it. Loading that DLL swaps the
+// console host for every pty this process creates afterwards.
+
+type FnCreate = unsafe extern "system" fn(Coord, Handle, Handle, u32, *mut Handle) -> i32;
+type FnResize = unsafe extern "system" fn(Handle, Coord) -> i32;
+type FnClose = unsafe extern "system" fn(Handle);
+
+struct Provider {
+    path: PathBuf,
+    create: FnCreate,
+    resize: FnResize,
+    close: FnClose,
+}
+
+static PROVIDER: OnceLock<Provider> = OnceLock::new();
+
+/// Resolve dependencies of the loaded DLL from its own directory.
+const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x0000_0008;
+
+pub fn use_conpty_library(dll: &Path) -> io::Result<()> {
+    if let Some(p) = PROVIDER.get() {
+        return if p.path == dll {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("a ConPTY library is already in use: {}", p.path.display()),
+            ))
+        };
+    }
+    let wide: Vec<u16> = dll.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: `wide` is a NUL-terminated UTF-16 path that outlives the call;
+    // the reserved handle is null as documented. Failure returns null. The
+    // module is never freed: pseudo-consoles created through it may outlive
+    // any scope we could tie it to.
+    let module = unsafe {
+        LoadLibraryExW(
+            wide.as_ptr(),
+            std::ptr::null_mut(),
+            LOAD_WITH_ALTERED_SEARCH_PATH,
+        )
+    };
+    if module.is_null() {
+        return Err(last_err());
+    }
+    let find = |name: &'static str| -> io::Result<*mut c_void> {
+        // SAFETY: `module` is a live module handle and `name` is NUL-terminated.
+        let p = unsafe { GetProcAddress(module, name.as_ptr()) };
+        if p.is_null() {
+            Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!(
+                    "{} does not export {}",
+                    dll.display(),
+                    name.trim_end_matches('\0')
+                ),
+            ))
+        } else {
+            Ok(p)
+        }
+    };
+    let (create, resize, close) = (
+        find("ConptyCreatePseudoConsole\0")?,
+        find("ConptyResizePseudoConsole\0")?,
+        find("ConptyClosePseudoConsole\0")?,
+    );
+    // SAFETY: each pointer is a non-null export whose documented prototype
+    // (Windows Terminal's conpty.h) matches kernel32's function of the same
+    // name without the prefix, which is the type it is cast to.
+    let provider = unsafe {
+        Provider {
+            path: dll.to_path_buf(),
+            create: std::mem::transmute::<*mut c_void, FnCreate>(create),
+            resize: std::mem::transmute::<*mut c_void, FnResize>(resize),
+            close: std::mem::transmute::<*mut c_void, FnClose>(close),
+        }
+    };
+    let _ = PROVIDER.set(provider);
+    Ok(())
+}
+
+pub fn conpty_library() -> Option<PathBuf> {
+    PROVIDER.get().map(|p| p.path.clone())
+}
+
+unsafe fn create_pseudo_console(
+    size: Coord,
+    input: Handle,
+    output: Handle,
+    hpc: *mut Handle,
+) -> i32 {
+    match PROVIDER.get() {
+        // SAFETY: forwarded unchanged; the caller upholds CreatePseudoConsole's contract.
+        Some(p) => unsafe { (p.create)(size, input, output, 0, hpc) },
+        None => unsafe { CreatePseudoConsole(size, input, output, 0, hpc) },
+    }
+}
+
+unsafe fn resize_pseudo_console(hpc: Handle, size: Coord) -> i32 {
+    match PROVIDER.get() {
+        // SAFETY: `hpc` came from the same provider's create call.
+        Some(p) => unsafe { (p.resize)(hpc, size) },
+        None => unsafe { ResizePseudoConsole(hpc, size) },
+    }
+}
+
+unsafe fn close_pseudo_console(hpc: Handle) {
+    match PROVIDER.get() {
+        // SAFETY: `hpc` came from the same provider's create call.
+        Some(p) => unsafe { (p.close)(hpc) },
+        None => unsafe { ClosePseudoConsole(hpc) },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{build_command_line, quote_arg};
@@ -713,6 +836,28 @@ mod tests {
         assert_eq!(
             build_command_line("cmd", &["/C", "echo hello world"]),
             "cmd /C \"echo hello world\""
+        );
+    }
+
+    #[test]
+    fn a_missing_conpty_library_is_an_error() {
+        use super::use_conpty_library;
+        let err = use_conpty_library(std::path::Path::new("Z:/definitely/not/here/conpty.dll"))
+            .expect_err("no such file");
+        assert_ne!(err.kind(), std::io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn a_library_without_the_conpty_exports_is_rejected() {
+        // kernel32 exports CreatePseudoConsole but not the Conpty* names, so it
+        // must be refused rather than half-loaded.
+        use super::{conpty_library, use_conpty_library};
+        let err = use_conpty_library(std::path::Path::new("kernel32.dll"))
+            .expect_err("no Conpty exports");
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+        assert!(
+            conpty_library().is_none(),
+            "a failed load must not install a provider"
         );
     }
 }
