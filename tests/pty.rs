@@ -614,3 +614,16 @@ fn batch_shim_receives_hostile_arguments_intact() {
     assert_eq!(got, want);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[cfg(windows)]
+#[test]
+fn without_a_library_a_pty_reports_the_system_host() {
+    // This test binary never calls use_conpty_library, so every pty it makes
+    // runs on the system's conhost.
+    let (cmd, args) = shell("echo host");
+    let argrefs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let mut p = pty::Pty::spawn(cmd, &argrefs, 24, 80).unwrap();
+    assert!(!p.uses_conpty_library());
+    assert_eq!(pty::conpty_library(), None);
+    let _ = p.wait();
+}

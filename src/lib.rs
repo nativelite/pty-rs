@@ -55,6 +55,10 @@ mod sys;
 /// it, a newer console host than the one in Windows. Call this before the
 /// first spawn; it is process-wide and cannot be undone. Calling it again with
 /// the same path is a no-op, and with a different path is an error.
+///
+/// A spawn whose console the library cannot create (for example, its
+/// `OpenConsole.exe` fails to start) falls back to the system's console host
+/// for that pty; [`Pty::uses_conpty_library`] says which one it got.
 #[cfg(windows)]
 pub fn use_conpty_library(dll: &std::path::Path) -> io::Result<()> {
     sys::use_conpty_library(dll)
@@ -264,6 +268,15 @@ impl Pty {
     /// how long to wait before escalating) belongs to the caller, not here.
     pub fn pid(&self) -> u32 {
         self.sys.pid()
+    }
+
+    /// True when this pty is hosted by the library set with
+    /// [`use_conpty_library`]; false when it runs on the system's
+    /// `conhost.exe` — no library was set, or the library could not create
+    /// the console and this pty fell back (Windows only).
+    #[cfg(windows)]
+    pub fn uses_conpty_library(&self) -> bool {
+        self.sys.uses_conpty_library()
     }
 
     /// Forcibly terminate the child.

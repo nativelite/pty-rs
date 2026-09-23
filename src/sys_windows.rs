@@ -169,6 +169,10 @@ pub struct Sys {
     process: Handle,
     thread: Handle,
     exit_code: Option<i32>,
+    /// The pseudo-console came from the library set with
+    /// `use_conpty_library` (false: the system's `conhost.exe`). Resize and
+    /// close must go to the same one.
+    library: bool,
 }
 
 // Raw handles are owned exclusively by this struct.
@@ -388,7 +392,16 @@ impl Sys {
                 y: rows as i16,
             };
             let mut hpc: Handle = std::ptr::null_mut();
-            let hr = create_pseudo_console(size, in_read, out_write, &mut hpc);
+            // Prefer the chosen library; if it cannot create the console (its
+            // OpenConsole.exe fails to start), this pane falls back to the
+            // system's conhost rather than failing: slower, never broken.
+            let mut library = PROVIDER.get().is_some();
+            let mut hr = create_pseudo_console(size, in_read, out_write, &mut hpc, library);
+            if hr != 0 && library {
+                library = false;
+                hpc = std::ptr::null_mut();
+                hr = create_pseudo_console(size, in_read, out_write, &mut hpc, false);
+            }
             // The console owns duplicates now; ours can go.
             CloseHandle(in_read);
             CloseHandle(out_write);
@@ -409,9 +422,10 @@ impl Sys {
                     process,
                     thread,
                     exit_code: None,
+                    library,
                 }),
                 Err(e) => {
-                    close_pseudo_console(hpc);
+                    close_pseudo_console(hpc, library);
                     CloseHandle(in_write);
                     CloseHandle(out_read);
                     Err(e)
@@ -521,6 +535,7 @@ impl Sys {
     pub fn resize(&mut self, rows: u16, cols: u16) -> io::Result<()> {
         let hr = unsafe {
             resize_pseudo_console(
+                self.library,
                 self.hpc,
                 Coord {
                     x: cols as i16,
@@ -564,6 +579,10 @@ impl Sys {
     /// a process tree is a Job Object, and a caller assigns one by reopening the
     /// process from its id. Returns 0 if the handle can no longer be resolved
     /// (the process has exited), which callers treat as "nothing to do".
+    pub fn uses_conpty_library(&self) -> bool {
+        self.library
+    }
+
     pub fn pid(&self) -> u32 {
         unsafe { GetProcessId(self.process) }
     }
@@ -602,7 +621,7 @@ impl Drop for Sys {
             // pipe nobody is reading. Breaking the pipes unblocks it.
             CloseHandle(self.input_write);
             CloseHandle(self.output_read);
-            close_pseudo_console(self.hpc);
+            close_pseudo_console(self.hpc, self.library);
             CloseHandle(self.thread);
             CloseHandle(self.process);
         }
@@ -788,29 +807,32 @@ pub fn conpty_library() -> Option<PathBuf> {
     PROVIDER.get().map(|p| p.path.clone())
 }
 
+/// The library's functions when `library` is set and one is loaded, else
+/// kernel32's (the system's conhost).
 unsafe fn create_pseudo_console(
     size: Coord,
     input: Handle,
     output: Handle,
     hpc: *mut Handle,
+    library: bool,
 ) -> i32 {
-    match PROVIDER.get() {
+    match PROVIDER.get().filter(|_| library) {
         // SAFETY: forwarded unchanged; the caller upholds CreatePseudoConsole's contract.
         Some(p) => unsafe { (p.create)(size, input, output, 0, hpc) },
         None => unsafe { CreatePseudoConsole(size, input, output, 0, hpc) },
     }
 }
 
-unsafe fn resize_pseudo_console(hpc: Handle, size: Coord) -> i32 {
-    match PROVIDER.get() {
+unsafe fn resize_pseudo_console(library: bool, hpc: Handle, size: Coord) -> i32 {
+    match PROVIDER.get().filter(|_| library) {
         // SAFETY: `hpc` came from the same provider's create call.
         Some(p) => unsafe { (p.resize)(hpc, size) },
         None => unsafe { ResizePseudoConsole(hpc, size) },
     }
 }
 
-unsafe fn close_pseudo_console(hpc: Handle) {
-    match PROVIDER.get() {
+unsafe fn close_pseudo_console(hpc: Handle, library: bool) {
+    match PROVIDER.get().filter(|_| library) {
         // SAFETY: `hpc` came from the same provider's create call.
         Some(p) => unsafe { (p.close)(hpc) },
         None => unsafe { ClosePseudoConsole(hpc) },
