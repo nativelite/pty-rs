@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- **`Pty::uses_conpty_library`** (Windows): whether this pty is hosted by the
-  library set with `use_conpty_library` or by the system's `conhost.exe`.
-
 ### Changed
 - **A pty falls back to the system's console host** when the library set with
   `use_conpty_library` cannot create its console (for example, its
@@ -18,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resizes and closes through the host that created it.
 
 ### Added
+- **`Pty::uses_conpty_library`** (Windows): whether this pty is hosted by the
+  library set with `use_conpty_library` or by the system's `conhost.exe`.
 - **`use_conpty_library(dll)` (Windows): host ptys with another ConPTY.**
   `CreatePseudoConsole` in kernel32 always starts the system's `conhost.exe`.
   This loads a `conpty.dll` that exports the drop-in `Conpty*` versions of the
