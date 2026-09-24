@@ -64,6 +64,21 @@ pub fn use_conpty_library(dll: &std::path::Path) -> io::Result<()> {
     sys::use_conpty_library(dll)
 }
 
+/// Start every pseudo-console created afterwards at the terminal's cursor
+/// instead of its top-left corner (`PSEUDOCONSOLE_INHERIT_CURSOR`, Windows
+/// only). Process-wide; `false` turns it off again for later spawns.
+///
+/// A terminal that writes something before the console starts (a banner)
+/// needs this: otherwise the console positions its output as if the screen
+/// were empty, and everything it draws lands offset from where the terminal
+/// shows it. **The terminal must answer the console's cursor-position query**
+/// (`ESC [ 6 n`) with where its cursor is; the console draws nothing until it
+/// is answered.
+#[cfg(windows)]
+pub fn inherit_cursor(on: bool) {
+    sys::set_inherit_cursor(on)
+}
+
 /// The ConPTY library set with [`use_conpty_library`], or `None` when the
 /// system's console host is in use (Windows only).
 #[cfg(windows)]

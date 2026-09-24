@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resizes and closes through the host that created it.
 
 ### Added
+- **`inherit_cursor(on)` (Windows): start consoles at the terminal's cursor**
+  (`PSEUDOCONSOLE_INHERIT_CURSOR`). Needed by a terminal that shows anything
+  before the console starts: otherwise the console lays out its output as if
+  the screen were empty, and later output lands offset. The terminal must
+  answer the console's cursor-position query (`ESC [ 6 n`). Process-wide and
+  off by default.
 - **`Pty::uses_conpty_library`** (Windows): whether this pty is hosted by the
   library set with `use_conpty_library` or by the system's `conhost.exe`.
 - **`use_conpty_library(dll)` (Windows): host ptys with another ConPTY.**

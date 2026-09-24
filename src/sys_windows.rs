@@ -738,6 +738,22 @@ struct Provider {
 
 static PROVIDER: OnceLock<Provider> = OnceLock::new();
 
+/// `PSEUDOCONSOLE_INHERIT_CURSOR`: start at the terminal's cursor.
+const PSEUDOCONSOLE_INHERIT_CURSOR: u32 = 0x1;
+static INHERIT_CURSOR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_inherit_cursor(on: bool) {
+    INHERIT_CURSOR.store(on, std::sync::atomic::Ordering::Release);
+}
+
+fn console_flags() -> u32 {
+    if INHERIT_CURSOR.load(std::sync::atomic::Ordering::Acquire) {
+        PSEUDOCONSOLE_INHERIT_CURSOR
+    } else {
+        0
+    }
+}
+
 /// Resolve dependencies of the loaded DLL from its own directory.
 const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x0000_0008;
 
@@ -818,8 +834,8 @@ unsafe fn create_pseudo_console(
 ) -> i32 {
     match PROVIDER.get().filter(|_| library) {
         // SAFETY: forwarded unchanged; the caller upholds CreatePseudoConsole's contract.
-        Some(p) => unsafe { (p.create)(size, input, output, 0, hpc) },
-        None => unsafe { CreatePseudoConsole(size, input, output, 0, hpc) },
+        Some(p) => unsafe { (p.create)(size, input, output, console_flags(), hpc) },
+        None => unsafe { CreatePseudoConsole(size, input, output, console_flags(), hpc) },
     }
 }
 
