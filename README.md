@@ -70,7 +70,10 @@ Semantics, stated plainly:
   pty entirely. Timeouts poll `PeekNamedPipe` (anonymous pipes can't do
   overlapped I/O); `ERROR_BROKEN_PIPE` is end-of-stream. Command lines are
   built with proper argv quoting (unit-tested against the
-  `CommandLineToArgvW` rules).
+  `CommandLineToArgvW` rules), except for a `.bat`/`.cmd` target (an npm
+  CLI shim, say): that runs under the system `cmd.exe` with batch-safe
+  argument encoding, so `&`, `|` and `%VAR%` in an argument arrive intact,
+  and an argument containing CR, LF or NUL is an error.
 - **Unix:** the child is spawned with `std::process::Command` over the
   slave fd, made session leader + controlling tty in `pre_exec`; the
   master carries `FD_CLOEXEC` so it never leaks into children. Timeouts
@@ -92,8 +95,9 @@ output arrives through the terminal, written input reaches an interactive
 shell and its response comes back, resize succeeds and the child observes a
 tty, exit codes propagate (twice-`wait` stable), `try_wait` transitions
 after `kill` (and killing an exited child is a no-op), pre-exit output is
-drainable post-exit, and a missing program errors cleanly without leaking
-handles. Windows runs these locally; the suite is portable and passes on Linux too.
+drainable post-exit, and spawning a missing program returns an error (that
+this path leaks no handles comes from the spawn code's cleanup, not from a
+check in the suite). Windows runs these locally; the suite is portable and passes on Linux too.
 
 ## Development
 

@@ -1,7 +1,8 @@
 //! Integration tests for `pty` against **real child processes** on a real
 //! pseudo-terminal: the only honest way to test this crate. Every test is
 //! deadline-bounded so a regression hangs the suite for seconds, not
-//! forever. Windows runs these locally; Linux runs them in CI.
+//! forever. Windows runs these locally; they pass on Linux too (run by hand:
+//! there is no CI).
 
 use std::time::{Duration, Instant};
 
